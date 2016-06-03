@@ -1,0 +1,28 @@
+{
+  "name": "chainpad-server",
+  "version": "1.0.0",
+  "description": "minimal standalone server for chainpad applications",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xwiki-labs/chainpad-server.git"
+  },
+  "keywords": [
+    "realtime",
+    "chain",
+    "synchronization"
+  ],
+  "author": "ansuz@transitiontech.ca",
+  "license": "AGPL-3.0",
+  "bugs": {
+    "url": "https://github.com/xwiki-labs/chainpad-server/issues"
+  },
+  "homepage": "https://github.com/xwiki-labs/chainpad-server#readme",
+  "dependencies": {
+    "express": "^4.13.4",
+    "ws": "^1.1.0"
+  }
+}
