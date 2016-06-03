@@ -1,0 +1,30 @@
+{
+  "name": "chainpad-server",
+  "version": "0.1.0",
+  "description": "minimal standalone server for chainpad applications",
+  "main": "www/index.html",
+  "authors": [
+    "ansuz@transitiontech.ca"
+  ],
+  "moduleType": [
+    "node"
+  ],
+  "license": "AGPL-3.0",
+  "keywords": [
+    "realtime",
+    "chain",
+    "synchronization"
+  ],
+  "homepage": "https://github.com/xwiki-labs/chainpad-server",
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+      "chainpad": "^0.2.2"
+  }
+}
