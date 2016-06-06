@@ -19,11 +19,16 @@ Most of these modules use [Require.js](http://requirejs.org/).
 
 ## Quick-Start
 
-If you look inside your server's `www/` directory, you'll find a `template/` directory.
-
-Inside are two files:
+If you look inside your server's `www/` directory, you'll find a `template/` directory, which contains two files:
 
 * `index.html`
 * `main.js`
 
+`template` is actually a really simple realtime "guestbook" app.
+You can open it [http://localhost:3000/template](http://localhost:3000/template) in two browser windows, and enter your name into the prompt.
+
+Once you've entered your name in one window, you should see your name on a list of people who have visited the page.
+
+In the second window, you can enter a new name.
+After hitting _OK_, you should see the new name appended to the list of visitors.
 
