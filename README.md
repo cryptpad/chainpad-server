@@ -41,7 +41,7 @@ If you have configured your server to use a different port, you will have to cha
 
 Once you have a webserver up and running, you can start developing an application.
 
-See [MANUAL.md](./MANUAL.md) for a quick tutorial building an example application.
+Documentation and guides for building such an application are available in our [Realtime-Handbook](https://github.com/xwiki-labs/realtime-handbook).
 
 ## License
 
