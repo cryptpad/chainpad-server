@@ -1,6 +1,6 @@
 {
   "name": "chainpad-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "minimal standalone server for chainpad applications",
   "main": "index.js",
   "scripts": {
@@ -22,7 +22,6 @@
   },
   "homepage": "https://github.com/xwiki-labs/chainpad-server#readme",
   "dependencies": {
-    "express": "^4.13.4",
     "ws": "^1.1.0"
   }
 }

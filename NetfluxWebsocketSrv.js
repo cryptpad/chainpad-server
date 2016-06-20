@@ -208,6 +208,7 @@ let run = module.exports.run = function (storage, socketServer, config) {
             config.channelRemovalTimeout:
             60000;
 
+    let websocketPath = config.websocketPath || '/cryptpad_websocket';
     let ctx = {
         users: {},
         channels: {},
