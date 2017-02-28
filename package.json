@@ -1,27 +1,16 @@
 {
-  "name": "chainpad-server",
-  "version": "1.0.1",
-  "description": "minimal standalone server for chainpad applications",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/xwiki-labs/chainpad-server.git"
-  },
-  "keywords": [
-    "realtime",
-    "chain",
-    "synchronization"
-  ],
-  "author": "ansuz@transitiontech.ca",
-  "license": "AGPL-3.0",
-  "bugs": {
-    "url": "https://github.com/xwiki-labs/chainpad-server/issues"
-  },
-  "homepage": "https://github.com/xwiki-labs/chainpad-server#readme",
+  "name": "cryptpad-api",
+  "description": "api backend for realtime collaborative visual editor with zero knowlege server",
+  "version": "0.1.0",
   "dependencies": {
-    "ws": "^1.1.0"
+    "ws": "^1.0.1",
+    "nthen": "~0.1.0",
+    "tweetnacl": "~0.12.2"
+  },
+  "devDependencies": {
+    "jshint": "~2.9.1",
+  },
+  "scripts": {
+      "lint": "jshint --config .jshintrc --exclude-path .jshintignore .",
   }
 }
