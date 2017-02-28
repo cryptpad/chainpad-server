@@ -175,8 +175,14 @@ const handleMessage = function (ctx, user, msg) {
             return;
         }
         let chanName = obj || randName();
-        sendMsg(ctx, user, [seq, 'JACK', chanName]);
         let chan = ctx.channels[chanName] = ctx.channels[chanName] || [];
+
+        if (chan.indexOf(user) !== -1) {
+            sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
+            return;
+        }
+
+        sendMsg(ctx, user, [seq, 'JACK', chanName]);
 
         // prevent removal of the channel if there is a pending timeout
         if (ctx.config.removeChannels && ctx.timeouts[chanName]) {
