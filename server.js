@@ -1,7 +1,8 @@
-var WebSocketServer = require('ws').Server;
-var NetfluxSrv = require('./NetfluxWebsocketSrv');
+(function () { 'use strict';
+const WebSocketServer = require('ws').Server;
+const NetfluxSrv = require('./NetfluxWebsocketSrv');
 
-var config = require('./config');
+const config = require('./config');
 config.port = config.port || 3000;
 config.host = config.host || '::';
 config.channelRemovalTimeout = config.channelRemovalTimeout || 60000;
@@ -9,8 +10,11 @@ config.websocketPath = config.websocketPath || '/cryptpad_websocket';
 config.logToStdout = config.logToStdout || false;
 config.verbose = config.verbose || false;
 config.removeChannels = config.removeChannels || false;
+config.storage = config.storage || './storage/file';
 
-var wsSrv = new WebSocketServer({ host: config.host port: config.port });
-Storage.create(config, function (store) {
+const Storage = require(config.storage);
+const wsSrv = new WebSocketServer({ host: config.host, port: config.port });
+Storage.create(config, (store) => {
     NetfluxSrv.run(store, wsSrv, config);
 });
+}());

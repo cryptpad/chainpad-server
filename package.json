@@ -8,9 +8,9 @@
     "tweetnacl": "~0.12.2"
   },
   "devDependencies": {
-    "jshint": "~2.9.1",
+    "jshint": "~2.9.1"
   },
   "scripts": {
-      "lint": "jshint --config .jshintrc --exclude-path .jshintignore .",
+    "lint": "jshint --config .jshintrc --exclude-path .jshintignore ."
   }
 }

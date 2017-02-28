@@ -12,6 +12,11 @@ module.exports = {
      */
     port: 3000,
 
+    /* The URL which must be hit in order to get a websocket connection.
+     * Any other URL will fail with an error.
+     */
+    websocketPath: '/cryptpad_websocket',
+
     /*  Cryptpad can log activity to stdout
      *  This may be useful for debugging
      */
@@ -55,5 +60,15 @@ module.exports = {
     /*  Cryptpad's file storage adaptor is limited by the number of open files.
      *  When the adaptor reaches openFileLimit, it will clean up older files
      */
-    openFileLimit: 2048
+    openFileLimit: 2048,
+
+    /* If true, channels will be deleted entirely after they have not been used
+     * for some time (channelRemovalTimeout)
+     */
+    removeChannels: false,
+
+    /* If removeChannels is true, the number of milliseconds to wait between the
+     * last person leaving the channel and the time when it is deleted.
+     */
+    channelRemovalTimeout: 60000
 };

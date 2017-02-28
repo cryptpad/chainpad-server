@@ -135,16 +135,16 @@ const getHistory = function (ctx, channelName, handler, cb) {
             console.log("Error getting messages " + err.stack);
             // TODO: handle this better
         }
-        var startPoint;
-        var cpCount = 0;
-        var msgBuff2 = [];
+        let startPoint;
+        let cpCount = 0;
+        const msgBuff2 = [];
         for (startPoint = messageBuf.length - 1; startPoint >= 0; startPoint--) {
-            var msg = messageBuf[startPoint];
+            const msg = messageBuf[startPoint];
             msgBuff2.push(msg);
             if (msg[2] === 'MSG' && msg[4].indexOf('cp|') === 0) {
                 cpCount++;
                 if (cpCount >= 2) {
-                    for (var x = msgBuff2.pop(); x; x = msgBuff2.pop()) { handler(x); }
+                    for (let x = msgBuff2.pop(); x; x = msgBuff2.pop()) { handler(x); }
                     break;
                 }
             }
@@ -152,7 +152,7 @@ const getHistory = function (ctx, channelName, handler, cb) {
         }
         if (cpCount < 2) {
             // no checkpoints.
-            for (var x = msgBuff2.pop(); x; x = msgBuff2.pop()) { handler(x); }
+            for (let x = msgBuff2.pop(); x; x = msgBuff2.pop()) { handler(x); }
         }
         cb(messageBuf);
     });
