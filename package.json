@@ -1,7 +1,7 @@
 {
-  "name": "cryptpad-api",
+  "name": "cryptpad-server",
   "description": "api backend for realtime collaborative visual editor with zero knowlege server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "dependencies": {
     "ws": "^1.0.1",
     "nthen": "~0.1.0",
