@@ -235,19 +235,22 @@ const handleMessage = function (ctx, user, msg) {
                 /* RPC Calls...  */
                 var rpc_call = parsed.slice(1);
 
+                sendMsg(ctx, user, [seq, 'ACK']);
+                try {
                 // slice off the sequence number and pass in the rest of the message
                 ctx.rpc(ctx, rpc_call, function (err, output) {
                     if (err) {
                         if (!ctx.config.suppressRPCErrors) {
                             console.error('[' + err + ']', output);
                         }
-                        sendMsg(ctx, user, [seq, 'ACK']);
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify([parsed[0], 'ERROR', err])]);
-                        return
+                        return;
                     }
-                    sendMsg(ctx, user, [seq, 'ACK']);
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify([parsed[0]].concat(output))]);
                 });
+                } catch (e) {
+                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify([parsed[0], 'ERROR', 'SERVER_ERROR'])]);
+                }
             }
             return;
         }
