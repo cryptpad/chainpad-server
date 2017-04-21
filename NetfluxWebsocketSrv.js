@@ -154,7 +154,8 @@ const getHistory = function (ctx, channelName, lastKnownHash, handler, cb) {
                     isSent = true;
                     break;
                 }
-            } else if (msg[2] === 'MSG' && msg[4].indexOf('cp|') === 0) {
+            } else if (msg[2] === 'MSG' && msg[4].indexOf('cp|') === 0 && lastKnownHash !== -1) {
+                // lastKnownhash === -1 means we want the complete history
                 cpCount++;
                 if (cpCount >= 2) {
                     sendBuff2();
@@ -229,6 +230,17 @@ const handleMessage = function (ctx, user, msg) {
                         historyKeeperKeys[parsed[1]] = parsed[2];
                     }
                     let parsedMsg = {state: 1, channel: parsed[1]};
+                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
+                });
+            } else if (parsed[0] === 'GET_FULL_HISTORY') {
+                // parsed[1] is the channel id
+                // parsed[2] is a validation key (optionnal)
+                // parsed[3] is the last known hash (optionnal)
+                sendMsg(ctx, user, [seq, 'ACK']);
+                getHistory(ctx, parsed[1], -1, function (msg) {
+                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(['FULL_HISTORY', msg])]);
+                }, function (messages) {
+                    let parsedMsg = ['FULL_HISTORY_END', parsed[1]];
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
                 });
             } else if (ctx.rpc) {
