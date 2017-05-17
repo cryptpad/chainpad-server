@@ -18,6 +18,13 @@ const socketSendable = function (socket) {
     return socket && socket.readyState === 1;
 };
 
+const isValidChannelId = function (id) {
+    if (typeof(id) !== 'string') { return false; }
+    if (id.length !== 32) { return false; }
+    if (/[^a-fA-F0-9]/.test(id)) { return false; }
+    return true;
+};
+
 const sendMsg = function (ctx, user, msg) {
     if (!socketSendable(user.socket)) { return; }
     try {
@@ -118,6 +125,8 @@ dropUser = function (ctx, user) {
     });
 };
 
+/*  getHistory assumes that the channelName is valid
+    (32 bytes of hexadecimal) */
 const getHistory = function (ctx, channelName, lastKnownHash, handler, cb) {
     let messageBuf = [];
     let messageKey;
@@ -221,6 +230,13 @@ const handleMessage = function (ctx, user, msg) {
                 // parsed[2] is a validation key (optionnal)
                 // parsed[3] is the last known hash (optionnal)
                 sendMsg(ctx, user, [seq, 'ACK']);
+
+                var channelName = parsed[1];
+                if (!isValidChannelId(channelName)) {
+                    sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
+                    return;
+                }
+
                 getHistory(ctx, parsed[1], parsed[3], function (msg) {
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)]);
                 }, function (messages) {
