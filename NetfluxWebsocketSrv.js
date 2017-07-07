@@ -235,7 +235,7 @@ const handleMessage = function (ctx, user, msg) {
                 var validateKey = parsed[2];
                 var lastKnownHash = parsed[3];
                 var owners;
-                if (typeof parsed[2] === "object") {
+                if (parsed[2] && typeof parsed[2] === "object") {
                     validateKey = parsed[2].validateKey;
                     lastKnownHash = parsed[2].lastKnownHash;
                     owners = parsed[2].owners;
