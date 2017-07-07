@@ -249,9 +249,9 @@ const handleMessage = function (ctx, user, msg) {
                 getHistory(ctx, channelName, lastKnownHash, function (msg) {
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)]);
                 }, function (messages) {
-                    if (messages.length === 0) {
+                    if (messages.length === 0 && !historyKeeperKeys[channelName]) {
                         var key = {channel: channelName};
-                        if (validateKey && !historyKeeperKeys[channelName]) {
+                        if (validateKey) {
                             key.validateKey = validateKey;
                             historyKeeperKeys[channelName] = validateKey;
                         }
