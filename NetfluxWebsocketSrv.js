@@ -365,12 +365,17 @@ let run = module.exports.run = function (storage, socketServer, config, rpc) {
                 dropUser(ctx, user);
             }
         });
-        socket.on('close', function (evt) {
+        var drop = function (evt) {
             for (let userId in ctx.users) {
                 if (ctx.users[userId].socket === socket) {
                     dropUser(ctx, ctx.users[userId]);
                 }
             }
+        };
+        socket.on('close', drop);
+        socket.on('error', function (err) {
+            console.error('WebSocket Error: ' + err.message);
+            drop();
         });
     });
 };
