@@ -232,20 +232,35 @@ const handleMessage = function (ctx, user, msg) {
                 sendMsg(ctx, user, [seq, 'ACK']);
 
                 var channelName = parsed[1];
+                var validateKey = parsed[2];
+                var lastKnownHash = parsed[3];
+                var owners;
+                if (parsed[2] && typeof parsed[2] === "object") {
+                    validateKey = parsed[2].validateKey;
+                    lastKnownHash = parsed[2].lastKnownHash;
+                    owners = parsed[2].owners;
+                }
+
                 if (!isValidChannelId(channelName)) {
                     sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
                     return;
                 }
 
-                getHistory(ctx, parsed[1], parsed[3], function (msg) {
+                getHistory(ctx, channelName, lastKnownHash, function (msg) {
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)]);
                 }, function (messages) {
-                    if (messages.length === 0 && parsed[2] && !historyKeeperKeys[parsed[1]]) {
-                        var key = {channel: parsed[1], validateKey: parsed[2]};
-                        storeMessage(ctx, ctx.channels[parsed[1]], JSON.stringify(key));
-                        historyKeeperKeys[parsed[1]] = parsed[2];
+                    if (messages.length === 0 && !historyKeeperKeys[channelName]) {
+                        var key = {channel: channelName};
+                        if (validateKey) {
+                            key.validateKey = validateKey;
+                            historyKeeperKeys[channelName] = validateKey;
+                        }
+                        if (owners) {
+                            key.owners = owners;
+                        }
+                        storeMessage(ctx, ctx.channels[channelName], JSON.stringify(key));
                     }
-                    let parsedMsg = {state: 1, channel: parsed[1]};
+                    let parsedMsg = {state: 1, channel: channelName};
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
                 });
             } else if (parsed[0] === 'GET_FULL_HISTORY') {
