@@ -25,6 +25,16 @@ const isValidChannelId = function (id) {
     return true;
 };
 
+const isBase64 = function (x) {
+    return /^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/.test(x);
+};
+
+const isValidHash = function (hash) {
+    if (typeof(hash) !== 'string') { return false; }
+    if (hash.length !== 64) { return false; }
+    return isBase64(hash);
+};
+
 const sendMsg = function (ctx, user, msg) {
     if (!socketSendable(user.socket)) { return; }
     try {
@@ -125,11 +135,14 @@ dropUser = function (ctx, user) {
     });
 };
 
+const getHash = function (msg) {
+    return msg.slice(0,64);
+};
+
 /*  getHistory assumes that the channelName is valid
     (32 bytes of hexadecimal) */
 const getHistory = function (ctx, channelName, lastKnownHash, handler, cb) {
     let messageBuf = [];
-    let messageKey;
     ctx.store.getMessages(channelName, function (msgStr) {
         let parsed = JSON.parse(msgStr);
         if (parsed.validateKey) {
@@ -149,15 +162,12 @@ const getHistory = function (ctx, channelName, lastKnownHash, handler, cb) {
         let sendBuff2 = function () {
             for (let x = msgBuff2.pop(); x; x = msgBuff2.pop()) { handler(x); }
         };
-        let hash = function (msg) {
-            return msg.slice(0,64); //Crypto.createHash('md5').update(msg).digest('hex');
-        };
         let isSent = false;
         for (startPoint = messageBuf.length - 1; startPoint >= 0; startPoint--) {
             let msg = messageBuf[startPoint];
             msgBuff2.push(msg);
             if (lastKnownHash) {
-                if (msg[2] === 'MSG' && hash(msg[4]) === lastKnownHash) {
+                if (msg[2] === 'MSG' && getHash(msg[4]) === lastKnownHash) {
                     msgBuff2.pop();
                     sendBuff2();
                     isSent = true;
@@ -178,6 +188,32 @@ const getHistory = function (ctx, channelName, lastKnownHash, handler, cb) {
             sendBuff2();
         }
         cb(messageBuf);
+    });
+};
+
+const getOlderHistory = function (ctx, channelName, oldestKnownHash, cb) {
+    var messageBuffer = [];
+    var found = false;
+    ctx.store.getMessages(channelName, function (msgStr) {
+        if (found) { return; }
+
+        let parsed = JSON.parse(msgStr);
+        if (parsed.validateKey) {
+            historyKeeperKeys[channelName] = parsed.validateKey;
+            return;
+        }
+
+        var content = parsed[4];
+        if (typeof(content) !== 'string') { return; }
+
+        var hash = getHash(content);
+        if (hash === oldestKnownHash) {
+            found = true;
+            return;
+        }
+        messageBuffer.push(parsed);
+    }, function (err) {
+        cb(messageBuffer);
     });
 };
 
@@ -221,6 +257,8 @@ const handleMessage = function (ctx, user, msg) {
         sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
         return;
     }
+
+    var channelName;
     if (cmd === 'MSG') {
         if (obj === HISTORY_KEEPER_ID) {
             let parsed;
@@ -231,7 +269,7 @@ const handleMessage = function (ctx, user, msg) {
                 // parsed[3] is the last known hash (optionnal)
                 sendMsg(ctx, user, [seq, 'ACK']);
 
-                var channelName = parsed[1];
+                channelName = parsed[1];
                 var validateKey = parsed[2];
                 var lastKnownHash = parsed[3];
                 var owners;
@@ -262,6 +300,39 @@ const handleMessage = function (ctx, user, msg) {
                     }
                     let parsedMsg = {state: 1, channel: channelName};
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
+                });
+            } else if (parsed[0] === 'GET_HISTORY_RANGE') {
+                channelName = parsed[1];
+                var map = parsed[2];
+                if (!(map && typeof(map) === 'object')) {
+                    return void sendMsg(ctx, user, [seq, 'ERROR', 'INVALID_ARGS', obj]);
+                }
+
+                var oldestKnownHash = map.from;
+                var desiredMessages = map.count;
+                var txid = map.txid;
+                if (typeof(desiredMessages) !== 'number') {
+                    return void sendMsg(ctx, user, [seq, 'ERROR', 'UNSPECIFIED_COUNT', obj]);
+                }
+                if (!isValidHash(oldestKnownHash)) {
+                    return void sendMsg(ctx, user, [seq, 'ERROR', 'INVALID_HASH', obj]);
+                }
+
+                if (!txid) {
+                    return void sendMsg(ctx, user, [seq, 'ERROR', 'NO_TXID', obj]);
+                }
+
+                sendMsg(ctx, user, [seq, 'ACK']);
+                return void getOlderHistory(ctx, channelName, oldestKnownHash, function (messages) {
+                    var toSend = messages.slice(-desiredMessages);
+                    toSend.forEach(function (msg) {
+                        sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id,
+                            JSON.stringify(['HISTORY_RANGE', txid, msg])]);
+                    });
+
+                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id,
+                        JSON.stringify(['HISTORY_RANGE_END', txid, channelName])
+                    ]);
                 });
             } else if (parsed[0] === 'GET_FULL_HISTORY') {
                 // parsed[1] is the channel id
