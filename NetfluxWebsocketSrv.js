@@ -209,7 +209,6 @@ const getOlderHistory = function (ctx, channelName, oldestKnownHash, cb) {
         var hash = getHash(content);
         if (hash === oldestKnownHash) {
             found = true;
-            return;
         }
         messageBuffer.push(parsed);
     }, function (err) {
