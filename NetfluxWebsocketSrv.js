@@ -272,10 +272,14 @@ const handleMessage = function (ctx, user, msg) {
                 var validateKey = parsed[2];
                 var lastKnownHash = parsed[3];
                 var owners;
+                var expire;
                 if (parsed[2] && typeof parsed[2] === "object") {
                     validateKey = parsed[2].validateKey;
                     lastKnownHash = parsed[2].lastKnownHash;
                     owners = parsed[2].owners;
+                    if (parsed[2].expire) {
+                        expire = +parsed[2].expire * 1000 + +new Date();
+                    }
                 }
 
                 if (!isValidChannelId(channelName)) {
@@ -295,7 +299,11 @@ const handleMessage = function (ctx, user, msg) {
                         if (owners) {
                             key.owners = owners;
                         }
+                        if (expire) {
+                            key.expire = expire;
+                        }
                         storeMessage(ctx, ctx.channels[channelName], JSON.stringify(key));
+                        sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(key)]);
                     }
                     let parsedMsg = {state: 1, channel: channelName};
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
