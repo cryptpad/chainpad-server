@@ -143,14 +143,18 @@ const getHash = function (msg) {
     (32 bytes of hexadecimal) */
 const getHistory = function (ctx, channelName, lastKnownHash, handler, cb) {
     let messageBuf = [];
+    let first = true;
     ctx.store.getMessages(channelName, function (msgStr) {
-        let parsed = JSON.parse(msgStr);
-        if (parsed.validateKey) {
-            historyKeeperKeys[channelName] = parsed.validateKey;
-            handler(parsed);
-            return;
+        if (first) {
+            first = false;
+            let parsed = JSON.parse(msgStr);
+            if (parsed.validateKey) {
+                historyKeeperKeys[channelName] = parsed.validateKey;
+                handler(parsed);
+                return;
+            }
         }
-        messageBuf.push(parsed);
+        messageBuf.push(msgStr);
     }, function (err) {
         if (err) {
             console.log("Error getting messages " + err.stack);
@@ -164,7 +168,8 @@ const getHistory = function (ctx, channelName, lastKnownHash, handler, cb) {
         };
         let isSent = false;
         for (startPoint = messageBuf.length - 1; startPoint >= 0; startPoint--) {
-            let msg = messageBuf[startPoint];
+            let msgStr = messageBuf[startPoint];
+            let msg = JSON.parse(msgStr);
             msgBuff2.push(msg);
             if (lastKnownHash) {
                 if (msg[2] === 'MSG' && getHash(msg[4]) === lastKnownHash) {
