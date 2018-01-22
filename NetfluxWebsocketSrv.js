@@ -1,5 +1,6 @@
 /*@flow*/
 /* jshint esversion: 6 */
+/* global Buffer, process */
 /*::
 import type { ChainPadServer_Storage_t } from './storage/file.js';
 const flow_WebSocketServer = require('ws').Server;
@@ -11,6 +12,7 @@ type Rpc_t = (any, rpcCall:string, (err:?Error, output:Array<string>)=>void)=>vo
 ;(function () { 'use strict';
 const Crypto = require('crypto');
 const Nacl = require('tweetnacl');
+const nThen = require('nthen');
 
 const LAG_MAX_BEFORE_DISCONNECT = 30000;
 const LAG_MAX_BEFORE_PING = 15000;
@@ -44,46 +46,147 @@ const isValidHash = function (hash) {
     return isBase64(hash);
 };
 
-const sendMsg = function (ctx, user, msg) {
+const getHash = function (msg) {
+    if (typeof(msg) !== 'string') {
+        console.log('getHash() called on', typeof(msg), msg);
+        return '';
+    }
+    return msg.slice(0,64);
+};
+
+// Try to keep 4MB of data in queue, if there's more on the buffer, hold off.
+const QUEUE_CHR = 1024 * 1024 * 4;
+
+const sendMsg = function (ctx, user, msg, cb) {
     if (!socketSendable(user.socket)) { return; }
     try {
-        if (ctx.config.logToStdout) { console.log('<' + JSON.stringify(msg)); }
-        user.socket.send(JSON.stringify(msg));
+        const strMsg = JSON.stringify(msg);
+        if (ctx.config.logToStdout) { console.log('<' + strMsg); }
+        user.inQueue += strMsg.length;
+        if (cb) { user.sendMsgCallbacks.push(cb); }
+        user.socket.send(strMsg, () => {
+            user.inQueue -= strMsg.length;
+            if (user.inQueue > QUEUE_CHR) { return; }
+            const smcb = user.sendMsgCallbacks;
+            user.sendMsgCallbacks = [];
+            try {
+                smcb.forEach((cb)=>{cb();});
+            } catch (e) {
+                console.error('Error thrown by sendMsg callback', e);
+            }
+        });
     } catch (e) {
         console.log(e.stack);
         dropUser(ctx, user);
     }
 };
 
-const storeMessage = function (ctx, channel, msg) {
-    ctx.store.message(channel.id, msg, function (err) {
-        if (err && typeof(err) !== 'function') {
-            // ignore functions because older datastores
-            // might pass waitFors into the callback
-            console.log("Error writing message: " + err.message);
+const computeIndex = function (ctx, channelName, cb) {
+    const cpIndex = [];
+    let messageBuf = [];
+    let validateKey;
+    ctx.store.readMessagesBin(channelName, 0, (msgObj, rmcb) => {
+        let msg;
+        if (!validateKey && msgObj.buff.indexOf('validateKey') > -1) {
+            msg = JSON.parse(msgObj.buff.toString('utf8'));
+            if (msg.validateKey) {
+                validateKey = historyKeeperKeys[channelName] = msg.validateKey;
+                return rmcb();
+            }
         }
+        if (msgObj.buff.indexOf('cp|') > -1) {
+            msg = msg || JSON.parse(msgObj.buff.toString('utf8'));
+            if (msg[2] === 'MSG' && msg[4].indexOf('cp|') === 0) {
+                cpIndex.push(msgObj.offset);
+                messageBuf = [];
+                return rmcb();
+            }
+        }
+        messageBuf.push(msgObj);
+        return rmcb();
+    }, (err) => {
+        if (err) { return void cb(err); }
+        const offsetByHash = {};
+        let size = -1;
+        messageBuf.forEach((msgObj) => {
+            const msg = JSON.parse(msgObj.buff.toString('utf8'));
+            if (msg[0] === 0 && msg[2] === 'MSG' && typeof(msg[4]) === 'string') {
+                offsetByHash[getHash(msg[4])] = msgObj.offset;
+            }
+            size = msgObj.offset + msgObj.buff.length;
+        });
+        cb(null, {
+            cpIndex: cpIndex.slice(-2), // only care about the most recent 2 checkpoints
+            offsetByHash: offsetByHash,
+            size: size
+        });
+    });
+};
+
+const getIndex = (ctx, channelName, cb) => {
+    const chan = ctx.channels[channelName];
+    if (chan.index) { return void cb(undefined, chan.index); }
+    computeIndex(ctx, channelName, (err, ret) => {
+        if (err) { return void cb(err); }
+        chan.index = ret;
+        cb(undefined, ret);
+    });
+};
+
+const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
+    const msgBin = new Buffer(msg + '\n', 'utf8');
+    nThen((waitFor) => {
+        getIndex(ctx, channel.id, waitFor((err, index) => {
+            if (err) {
+                console.log(err.stack);
+                // non-critical, we'll be able to get the channel index later
+                return;
+            }
+            if (isCp) {
+                index.cpIndex.shift();
+                for (let k in index.offsetByHash) {
+                    if (index.offsetByHash[k] < index.cpIndex[0]) {
+                        delete index.offsetByHash[k];
+                    }
+                }
+                index.cpIndex.push(index.size);
+            }
+            if (maybeMsgHash) { index.offsetByHash[maybeMsgHash] = index.size; }
+            index.size += msgBin.length;
+        }));
+    }).nThen((waitFor) => {
+        ctx.store.messageBin(channel.id, msgBin, function (err) {
+            if (err && typeof(err) !== 'function') {
+                // ignore functions because older datastores
+                // might pass waitFors into the callback
+                console.log("Error writing message: " + err.message);
+            }
+        });
     });
 };
 
 const sendChannelMessage = function (ctx, channel, msgStruct) {
     msgStruct.unshift(0);
     channel.forEach(function (user) {
-      if(msgStruct[2] !== 'MSG' || user.id !== msgStruct[1]) { // We don't want to send back a message to its sender, in order to save bandwidth
-        sendMsg(ctx, user, msgStruct);
-      }
+        // We don't want to send back a message to its sender, in order to save bandwidth
+        if (msgStruct[2] !== 'MSG' || user.id !== msgStruct[1]) {
+            sendMsg(ctx, user, msgStruct);
+        }
     });
     if (USE_HISTORY_KEEPER && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
+        const isCp = /^cp\|/.test(msgStruct[4]);
         if (historyKeeperKeys[channel.id]) {
-            let signedMsg = msgStruct[4].replace(/^cp\|/, '');
+            /*::if (typeof(msgStruct[4]) !== 'string') { throw new Error(); }*/
+            let signedMsg = (isCp) ? msgStruct[4].replace(/^cp\|/, '') : msgStruct[4];
             signedMsg = Nacl.util.decodeBase64(signedMsg);
-            let validateKey = Nacl.util.decodeBase64(historyKeeperKeys[channel.id]);
-            let validated = Nacl.sign.open(signedMsg, validateKey);
+            const validateKey = Nacl.util.decodeBase64(historyKeeperKeys[channel.id]);
+            const validated = Nacl.sign.open(signedMsg, validateKey);
             if (!validated) {
                 console.log("Signed message rejected");
                 return;
             }
         }
-        storeMessage(ctx, channel, JSON.stringify(msgStruct));
+        storeMessage(ctx, channel, JSON.stringify(msgStruct), isCp, getHash(msgStruct[4]));
     }
 };
 
@@ -144,64 +247,55 @@ dropUser = function (ctx, user) {
     });
 };
 
-const getHash = function (msg) {
-    return msg.slice(0,64);
+
+const getHistoryOffset = (ctx, channelName, lastKnownHash, cb) => {
+    // lastKnownhash === -1 means we want the complete history
+    if (lastKnownHash === -1) { return void cb(null, 0); }
+    let offset = -1;
+    nThen((waitFor) => {
+        getIndex(ctx, channelName, waitFor((err, index) => {
+            if (err) { waitFor.abort(); return void cb(err); }
+            // Since last 2 checkpoints
+            if (!lastKnownHash) { return void cb(null, index.cpIndex[0]); }
+            const lnh = index.offsetByHash[lastKnownHash];
+            if (typeof(lnh) === 'number') { offset = lnh; }
+        }));
+    }).nThen((waitFor) => {
+        if (offset === -1) { return; }
+        ctx.store.readMessagesBin(channelName, 0, (msgObj, rmcb, abort) => {
+            if (msgObj.buff.indexOf('cp|') === -1) { return void rmcb(); }
+            const msg = JSON.parse(msgObj.buff.toString('utf8'));
+            if (typeof(msg[4]) !== 'string' || lastKnownHash !== getHash(msg[4])) {
+                return void rmcb();
+            }
+            offset = msgObj.offset;
+            abort();
+        }, waitFor(function (err) {
+            if (err) { waitFor.abort(); return void cb(err); }
+        }));
+    }).nThen((waitFor) => {
+        cb(null, offset);
+    });
 };
 
-/*  getHistory assumes that the channelName is valid
-    (32 bytes of hexadecimal) */
-const getHistory = function (ctx, channelName, lastKnownHash, handler, cb) {
-    let messageBuf = [];
-    let first = true;
-    ctx.store.getMessages(channelName, function (msgStr) {
-        if (first) {
-            first = false;
-            let parsed = JSON.parse(msgStr);
-            if (parsed.validateKey) {
-                historyKeeperKeys[channelName] = parsed.validateKey;
-                handler(parsed);
-                return;
+const getHistoryAsync = (ctx, channelName, lastKnownHash, beforeHash, handler, cb) => {
+    let offset = -1;
+    nThen((waitFor) => {
+        getHistoryOffset(ctx, channelName, lastKnownHash, waitFor((err, os) => {
+            if (err) {
+                waitFor.abort();
+                return void cb(err);
             }
-        }
-        messageBuf.push(msgStr);
-    }, function (err) {
-        if (err) {
-            console.log("Error getting messages " + err.stack);
-            // TODO: handle this better
-        }
-        let startPoint;
-        let cpCount = 0;
-        let msgBuff2 = [];
-        let sendBuff2 = function () {
-            for (let x = msgBuff2.pop(); x; x = msgBuff2.pop()) { handler(x); }
-        };
-        let isSent = false;
-        for (startPoint = messageBuf.length - 1; startPoint >= 0; startPoint--) {
-            let msgStr = messageBuf[startPoint];
-            let msg = JSON.parse(msgStr);
-            msgBuff2.push(msg);
-            if (lastKnownHash) {
-                if (msg[2] === 'MSG' && getHash(msg[4]) === lastKnownHash) {
-                    msgBuff2.pop();
-                    sendBuff2();
-                    isSent = true;
-                    break;
-                }
-            } else if (msg[2] === 'MSG' && msg[4].indexOf('cp|') === 0 && lastKnownHash !== -1) {
-                // lastKnownhash === -1 means we want the complete history
-                cpCount++;
-                if (cpCount >= 2) {
-                    sendBuff2();
-                    isSent = true;
-                    break;
-                }
-            }
-        }
-        if (!isSent) {
-            // no checkpoints.
-            sendBuff2();
-        }
-        cb(messageBuf);
+            offset = os;
+        }));
+    }).nThen((waitFor) => {
+        const start = (beforeHash) ? offset : 0;
+        ctx.store.readMessagesBin(channelName, start, (msgObj, rmcb, abort) => {
+            if (beforeHash && msgObj.offset >= offset) { return void abort(); }
+            handler(JSON.parse(msgObj.buff.toString('utf8')), rmcb);
+        }, waitFor(function (err) {
+            return void cb(err);
+        }));
     });
 };
 
@@ -237,7 +331,7 @@ const randName = function () { return Crypto.randomBytes(16).toString('hex'); };
 
 /*::
 type Chan_t = {
-    indexOf: (any)=>Number,
+    indexOf: (any)=>number,
     id: string,
     forEach: ((any)=>void)=>void,
     push: (any)=>void,
@@ -313,10 +407,18 @@ const handleMessage = function (ctx, user, msg) {
                     return;
                 }
 
-                getHistory(ctx, channelName, lastKnownHash, function (msg) {
-                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)]);
-                }, function (messages) {
-                    if (messages.length === 0 && !historyKeeperKeys[channelName]) {
+                let msgCount = 0;
+                getHistoryAsync(ctx, channelName, lastKnownHash, false, (msg, cb) => {
+                    msgCount++;
+                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)], cb);
+                }, (err) => {
+                    if (err) {
+                        console.error(err);
+                        const parsedMsg = {error:err.message, channel: channelName};
+                        sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
+                        return;
+                    }
+                    if (msgCount === 0 && !historyKeeperKeys[channelName]) {
                         var key = {};
                         key.channel = channelName;
                         if (validateKey) {
@@ -329,7 +431,7 @@ const handleMessage = function (ctx, user, msg) {
                         if (expire) {
                             key.expire = expire;
                         }
-                        storeMessage(ctx, ctx.channels[channelName], JSON.stringify(key));
+                        storeMessage(ctx, ctx.channels[channelName], JSON.stringify(key), false, undefined);
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(key)]);
                     }
                     let parsedMsg = {state: 1, channel: channelName};
@@ -373,10 +475,14 @@ const handleMessage = function (ctx, user, msg) {
                 // parsed[2] is a validation key (optionnal)
                 // parsed[3] is the last known hash (optionnal)
                 sendMsg(ctx, user, [seq, 'ACK']);
-                getHistory(ctx, parsed[1], -1, function (msg) {
-                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(['FULL_HISTORY', msg])]);
-                }, function (messages) {
+                getHistoryAsync(ctx, parsed[1], -1, false, (msg, cb) => {
+                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(['FULL_HISTORY', msg])], cb);
+                }, (err) => {
                     let parsedMsg = ['FULL_HISTORY_END', parsed[1]];
+                    if (err) {
+                        console.error(err.stack);
+                        parsedMsg = ['ERROR', parsed[1], err.message];
+                    }
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
                 });
             } else if (ctx.rpc) {
@@ -473,6 +579,26 @@ module.exports.run = function (
                 u.pingOutstanding = true;
             }
         });
+
+        if (process.env['CRYPTPAD_DEBUG']) {
+            let nt = nThen;
+            Object.keys(ctx.channels).forEach(function (channelName) {
+                const chan = ctx.channels[channelName];
+                if (!chan.index) { return; }
+                if (chan.index.cpIndex.length > 2) {
+                    console.log("channel", channelName, "has cpIndex length", chan.index.cpIndex.length);
+                }
+                nt = nt((waitFor) => {
+                    ctx.store.getChannelSize(channelName, waitFor((err, size) => {
+                        if (err) { return void console.log("Couldn't get size of channel", channelName); }
+                        if (size !== chan.index.size) {
+                            console.log("channel size mismatch for", channelName,
+                                "cached:", chan.index.size, "fileSize:", size);
+                        }
+                    }));
+                }).nThen;
+            });
+        }
     }, 5000);
     socketServer.on('connection', function(socket) {
         if(socket.upgradeReq.url !== (config.websocketPath || '/cryptpad_websocket')) { return; }
@@ -482,7 +608,9 @@ module.exports.run = function (
             socket: socket,
             id: randName(),
             timeOfLastMessage: now(),
-            pingOutstanding: false
+            pingOutstanding: false,
+            inQueue: 0,
+            sendMsgCallbacks: []
         };
         ctx.users[user.id] = user;
         sendMsg(ctx, user, [0, '', 'IDENT', user.id]);

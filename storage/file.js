@@ -1,8 +1,11 @@
 /*@flow*/
 /* jshint esversion: 6 */
+/* global Buffer */
 var Fs = require("fs");
 var Path = require("path");
 var nThen = require("nthen");
+const ToPull = require('stream-to-pull-stream');
+const Pull = require('pull-stream');
 
 var mkPath = function (env, channelId) {
     return Path.join(env.root, channelId.slice(0, 2), channelId) + '.ndjson';
@@ -108,6 +111,60 @@ var readMessages = function (path, msgHandler, cb) {
     stream.on('error', function (e) { complete(e); });
 };
 
+const NEWLINE_CHR = ('\n').charCodeAt(0);
+const mkBufferSplit = () => {
+    let remainder = null;
+    return Pull((read) => {
+        return (abort, cb) => {
+            read(abort, function (end, data) {
+                if (end) {
+                    cb(end, remainder ? [remainder, data] : [data]);
+                    remainder = null;
+                    return;
+                }
+                const queue = [];
+                for (;;) {
+                    const offset = data.indexOf(NEWLINE_CHR);
+                    if (offset < 0) {
+                        remainder = remainder ? Buffer.concat([remainder, data]) : data;
+                        break;
+                    }
+                    let subArray = data.slice(0, offset);
+                    if (remainder) {
+                        subArray = Buffer.concat([remainder, subArray]);
+                        remainder = null;
+                    }
+                    queue.push(subArray);
+                    data = data.slice(offset + 1);
+                }
+                cb(end, queue);
+            });
+        };
+    }, Pull.flatten());
+};
+
+const mkOffsetCounter = () => {
+    let offset = 0;
+    return Pull.map((buff) => {
+        const out = { offset: offset, buff: buff };
+        // +1 for the eaten newline
+        offset += buff.length + 1;
+        return out;
+    });
+};
+
+const readMessagesBin = (env, id, start, msgHandler, cb) => {
+    const stream = Fs.createReadStream(mkPath(env, id), { start: start });
+    let keepReading = true;
+    Pull(
+        ToPull.read(stream),
+        mkBufferSplit(),
+        mkOffsetCounter(),
+        Pull.asyncMap((data, moreCb) => { msgHandler(data, moreCb, ()=>{ keepReading = false; moreCb(); }); }),
+        Pull.drain(()=>(keepReading), cb)
+    );
+};
+
 var checkPath = function (path, callback) {
     // TODO check if we actually need to use stat at all
     Fs.stat(path, function (err) {
@@ -157,6 +214,14 @@ var flushUnusedChannels = function (env, cb, frame) {
     cb();
 };
 
+var channelBytes = function (env, chanName, cb) {
+    var path = mkPath(env, chanName);
+    Fs.stat(path, function (err, stats) {
+        if (err) { return void cb(err); }
+        cb(undefined, stats.size);
+    });
+};
+
 /*::
 export type ChainPadServer_ChannelInternal_t = {
     atime: number,
@@ -164,7 +229,7 @@ export type ChainPadServer_ChannelInternal_t = {
     whenLoaded: ?Array<(err:?Error, chan:?ChainPadServer_ChannelInternal_t)=>void>,
     onError: Array<(?Error)=>void>,
     path: string
-}
+};
 */
 var getChannel = function (
     env,
@@ -247,7 +312,7 @@ var getChannel = function (
     });
 };
 
-var message = function (env, chanName, msg, cb) {
+const messageBin = (env, chanName, msgBin, cb) => {
     getChannel(env, chanName, function (err, chan) {
         if (!chan) {
             cb(err);
@@ -260,15 +325,19 @@ var message = function (env, chanName, msg, cb) {
             cb(err);
         };
         chan.onError.push(complete);
-        chan.writeStream.write(msg + '\n', function () {
-            if (!chan) { throw new Error("Flow unreachable"); }
-            chan.onError.splice(chan.onError.indexOf(complete) - 1, 1);
+        chan.writeStream.write(msgBin, function () {
+            /*::if (!chan) { throw new Error("Flow unreachable"); }*/
+            chan.onError.splice(chan.onError.indexOf(complete), 1);
             if (!cb) { return; }
             //chan.messages.push(msg);
             chan.atime = +new Date();
             complete();
         });
     });
+};
+
+var message = function (env, chanName, msg, cb) {
+    messageBin(env, chanName, new Buffer(msg + '\n', 'utf8'), cb);
 };
 
 var getMessages = function (env, chanName, handler, cb) {
@@ -299,19 +368,17 @@ var getMessages = function (env, chanName, handler, cb) {
     });
 };
 
-var channelBytes = function (env, chanName, cb) {
-    var path = mkPath(env, chanName);
-    Fs.stat(path, function (err, stats) {
-        if (err) { return void cb(err); }
-        cb(void 0, stats.size);
-    });
-};
-
 /*::
-export type ChainPadServer_MessageObj_t = { buff: Buffer, offset: Number };
-export type ChainPadServer_Channel_t = { };
+export type ChainPadServer_MessageObj_t = { buff: Buffer, offset: number };
 export type ChainPadServer_Storage_t = {
+    readMessagesBin: (
+        channelName:string,
+        start:number,
+        asyncMsgHandler:(msg:ChainPadServer_MessageObj_t, moreCb:()=>void, abortCb:()=>void)=>void,
+        cb:(err:?Error)=>void
+    )=>void,
     message: (channelName:string, content:string, cb:(err:?Error)=>void)=>void,
+    messageBin: (channelName:string, content:Buffer, cb:(err:?Error)=>void)=>void,
     getMessages: (channelName:string, msgHandler:(msg:string)=>void, cb:(err:?Error)=>void)=>void,
     removeChannel: (channelName:string, cb:(err:?Error)=>void)=>void,
     closeChannel: (channelName:string, cb:(err:?Error)=>void)=>void,
@@ -342,8 +409,14 @@ module.exports.create = function (
             throw err;
         }
         cb({
+            readMessagesBin: (channelName, start, asyncMsgHandler, cb) => {
+                readMessagesBin(env, channelName, start, asyncMsgHandler, cb);
+            },
             message: function (channelName, content, cb) {
                 message(env, channelName, content, cb);
+            },
+            messageBin: (channelName, content, cb) => {
+                messageBin(env, channelName, content, cb);
             },
             getMessages: function (channelName, msgHandler, cb) {
                 getMessages(env, channelName, msgHandler, cb);
