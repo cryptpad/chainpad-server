@@ -6,6 +6,85 @@ var mkPath = function (env, channelId) {
     return Path.join(env.root, channelId.slice(0, 2), channelId) + '.ndjson';
 };
 
+var getMetadataAtPath = function (Env, path, cb) {
+    var remainder = '';
+    var stream = Fs.createReadStream(path, 'utf8');
+    var complete = function (err, data) {
+        var _cb = cb;
+        cb = undefined;
+        if (_cb) { _cb(err, data); }
+    };
+    stream.on('data', function (chunk) {
+        if (!/\n/.test(chunk)) {
+            remainder += chunk;
+            return;
+        }
+        stream.close();
+        var metadata = chunk.split('\n')[0];
+
+        var parsed = null;
+        try {
+            parsed = JSON.parse(metadata);
+            complete(void 0, parsed);
+        }
+        catch (e) {
+            console.log();
+            console.error(e);
+            complete('INVALID_METADATA');
+        }
+    });
+    stream.on('end', function () {
+        complete(null);
+    });
+    stream.on('error', function (e) { complete(e); });
+};
+
+var getChannelMetadata = function (Env, channelId, cb) {
+    var path = mkPath(Env, channelId);
+    getMetadataAtPath(Env, path, cb);
+};
+
+var closeChannel = function (env, channelName, cb) {
+    if (!env.channels[channelName]) { return void cb(); }
+    try {
+        env.channels[channelName].writeStream.close();
+        delete env.channels[channelName];
+        env.openFiles--;
+        cb();
+    } catch (err) {
+        cb(err);
+    }
+};
+
+var clearChannel = function (env, channelId, cb) {
+    var path = mkPath(env, channelId);
+    getMetadataAtPath(env, path, function (e, metadata) {
+        if (e) { return cb(e); }
+        if (!metadata) {
+            return void Fs.truncate(path, 0, function (err) {
+                if (err) {
+                    return cb(err);
+                }
+                cb(void 0);
+            });
+        }
+
+        var len = JSON.stringify(metadata).length + 1;
+
+        // as long as closeChannel is synchronous, this should not cause
+        // any race conditions. truncate ought to return faster than a channel
+        // can be opened and read by another user. if that turns out not to be
+        // the case, we'll need to implement locking.
+        closeChannel(env, channelId, function (err) {
+            if (err) { cb(err); }
+            Fs.truncate(path, len, function (err) {
+                if (err) { return cb(err); }
+                cb();
+            });
+        });
+    });
+};
+
 var readMessages = function (path, msgHandler, cb) {
     var remainder = '';
     var stream = Fs.createReadStream(path, 'utf8');
@@ -28,7 +107,8 @@ var readMessages = function (path, msgHandler, cb) {
 };
 
 var checkPath = function (path, callback) {
-    Fs.stat(path, function (err, stats) {
+    // TODO check if we actually need to use stat at all
+    Fs.stat(path, function (err) {
         if (!err) {
             callback(undefined, true);
             return;
@@ -48,20 +128,8 @@ var checkPath = function (path, callback) {
 };
 
 var removeChannel = function (env, channelName, cb) {
-    var filename = Path.join(env.root, channelName.slice(0, 2), channelName + '.ndjson');
+    var filename = mkPath(env, channelName);
     Fs.unlink(filename, cb);
-};
-
-var closeChannel = function (env, channelName, cb) {
-    if (!env.channels[channelName]) { return; }
-    try {
-        env.channels[channelName].writeStream.close();
-        delete env.channels[channelName];
-        env.openFiles--;
-        cb();
-    } catch (err) {
-        cb(err);
-    }
 };
 
 var flushUnusedChannels = function (env, cb, frame) {
@@ -109,13 +177,13 @@ var getChannel = function (env, id, callback) {
             }, env.channelExpirationMs / 2);
         });
     }
-
+    var path = mkPath(env, id);
     var channel = env.channels[id] = {
         atime: +new Date(),
-        messages: [],
         writeStream: undefined,
         whenLoaded: [ callback ],
-        onError: [ ]
+        onError: [ ],
+        path: path
     };
     var complete = function (err) {
         var whenLoaded = channel.whenLoaded;
@@ -127,7 +195,6 @@ var getChannel = function (env, id, callback) {
         }
         whenLoaded.forEach(function (wl) { wl(err, (err) ? undefined : channel); });
     };
-    var path = mkPath(env, id);
     var fileExists;
     var errorState;
     nThen(function (waitFor) {
@@ -138,17 +205,6 @@ var getChannel = function (env, id, callback) {
                 return;
             }
             fileExists = exists;
-        }));
-    }).nThen(function (waitFor) {
-        if (errorState) { return; }
-        if (!fileExists) { return; }
-        readMessages(path, function (msg) {
-            channel.messages.push(msg);
-        }, waitFor(function (err) {
-            if (err) {
-                errorState = true;
-                complete(err);
-            }
         }));
     }).nThen(function (waitFor) {
         if (errorState) { return; }
@@ -166,7 +222,7 @@ var getChannel = function (env, id, callback) {
                 });
             }
         });
-    }).nThen(function (waitFor) {
+    }).nThen(function () {
         if (errorState) { return; }
         complete();
     });
@@ -187,7 +243,7 @@ var message = function (env, chanName, msg, cb) {
         chan.writeStream.write(msg + '\n', function () {
             chan.onError.splice(chan.onError.indexOf(complete) - 1, 1);
             if (!cb) { return; }
-            chan.messages.push(msg);
+            //chan.messages.push(msg);
             chan.atime = +new Date();
             complete();
         });
@@ -200,19 +256,32 @@ var getMessages = function (env, chanName, handler, cb) {
             cb(err);
             return;
         }
-        try {
-            chan.messages
-                .forEach(function (message) {
-                    if (!message) { return; }
-                    handler(message);
-                });
-        } catch (err2) {
-            console.error(err2);
-            cb(err2);
-            return;
-        }
-        chan.atime = +new Date();
-        cb();
+        var errorState = false;
+        readMessages(chan.path, function (msg) {
+            if (!msg || errorState) { return; }
+            //console.log(msg);
+            try {
+                handler(msg);
+            } catch (e) {
+                errorState = true;
+                return void cb(err);
+            }
+        }, function (err) {
+            if (err) {
+                errorState = true;
+                return void cb(err);
+            }
+            chan.atime = +new Date();
+            cb();
+        });
+    });
+};
+
+var channelBytes = function (env, chanName, cb) {
+    var path = mkPath(env, chanName);
+    Fs.stat(path, function (err, stats) {
+        if (err) { return void cb(err); }
+        cb(void 0, stats.size);
     });
 };
 
@@ -247,6 +316,15 @@ module.exports.create = function (conf, cb) {
             },
             flushUnusedChannels: function (cb) {
                 flushUnusedChannels(env, cb);
+            },
+            getChannelSize: function (chanName, cb) {
+                channelBytes(env, chanName, cb);
+            },
+            getChannelMetadata: function (channelName, cb) {
+                getChannelMetadata(env, channelName, cb);
+            },
+            clearChannel: function (channelName, cb) {
+                clearChannel(env, channelName, cb);
             },
         });
     });
