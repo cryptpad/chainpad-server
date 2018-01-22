@@ -1,3 +1,4 @@
+/* jshint esversion: 6 */
 (function () { 'use strict';
 const WebSocketServer = require('ws').Server;
 const NetfluxSrv = require('./NetfluxWebsocketSrv');

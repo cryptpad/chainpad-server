@@ -1,3 +1,5 @@
+/*@flow*/
+/* jshint esversion: 6 */
 var Fs = require("fs");
 var Path = require("path");
 var nThen = require("nthen");
@@ -8,7 +10,7 @@ var mkPath = function (env, channelId) {
 
 var getMetadataAtPath = function (Env, path, cb) {
     var remainder = '';
-    var stream = Fs.createReadStream(path, 'utf8');
+    var stream = Fs.createReadStream(path, { encoding: 'utf8' });
     var complete = function (err, data) {
         var _cb = cb;
         cb = undefined;
@@ -25,7 +27,7 @@ var getMetadataAtPath = function (Env, path, cb) {
         var parsed = null;
         try {
             parsed = JSON.parse(metadata);
-            complete(void 0, parsed);
+            complete(undefined, parsed);
         }
         catch (e) {
             console.log();
@@ -34,7 +36,7 @@ var getMetadataAtPath = function (Env, path, cb) {
         }
     });
     stream.on('end', function () {
-        complete(null);
+        complete();
     });
     stream.on('error', function (e) { complete(e); });
 };
@@ -59,7 +61,7 @@ var closeChannel = function (env, channelName, cb) {
 var clearChannel = function (env, channelId, cb) {
     var path = mkPath(env, channelId);
     getMetadataAtPath(env, path, function (e, metadata) {
-        if (e) { return cb(e); }
+        if (e) { return cb(new Error(e)); }
         if (!metadata) {
             return void Fs.truncate(path, 0, function (err) {
                 if (err) {
@@ -87,7 +89,7 @@ var clearChannel = function (env, channelId, cb) {
 
 var readMessages = function (path, msgHandler, cb) {
     var remainder = '';
-    var stream = Fs.createReadStream(path, 'utf8');
+    var stream = Fs.createReadStream(path, { encoding: 'utf8' });
     var complete = function (err) {
         var _cb = cb;
         cb = undefined;
@@ -117,7 +119,8 @@ var checkPath = function (path, callback) {
             callback(err);
             return;
         }
-        Fs.mkdir(Path.dirname(path), function (err) {
+        // 511 -> octal 777
+        Fs.mkdir(Path.dirname(path), 511, function (err) {
             if (err && err.code !== 'EEXIST') {
                 callback(err);
                 return;
@@ -154,7 +157,20 @@ var flushUnusedChannels = function (env, cb, frame) {
     cb();
 };
 
-var getChannel = function (env, id, callback) {
+/*::
+export type ChainPadServer_ChannelInternal_t = {
+    atime: number,
+    writeStream: typeof(process.stdout),
+    whenLoaded: ?Array<(err:?Error, chan:?ChainPadServer_ChannelInternal_t)=>void>,
+    onError: Array<(?Error)=>void>,
+    path: string
+}
+*/
+var getChannel = function (
+    env,
+    id,
+    callback /*:(err:?Error, chan:?ChainPadServer_ChannelInternal_t)=>void*/
+) {
     if (env.channels[id]) {
         var chan = env.channels[id];
         chan.atime = +new Date();
@@ -178,9 +194,9 @@ var getChannel = function (env, id, callback) {
         });
     }
     var path = mkPath(env, id);
-    var channel = env.channels[id] = {
+    var channel /*:ChainPadServer_ChannelInternal_t*/ = env.channels[id] = {
         atime: +new Date(),
-        writeStream: undefined,
+        writeStream: (undefined /*:any*/),
         whenLoaded: [ callback ],
         onError: [ ],
         path: path
@@ -192,6 +208,9 @@ var getChannel = function (env, id, callback) {
         channel.whenLoaded = undefined;
         if (err) {
             delete env.channels[id];
+        }
+        if (!channel.writeStream) {
+            throw new Error("getChannel() complete called without channel writeStream");
         }
         whenLoaded.forEach(function (wl) { wl(err, (err) ? undefined : channel); });
     };
@@ -211,7 +230,7 @@ var getChannel = function (env, id, callback) {
         var stream = channel.writeStream = Fs.createWriteStream(path, { flags: 'a' });
         env.openFiles++;
         stream.on('open', waitFor());
-        stream.on('error', function (err) {
+        stream.on('error', function (err /*:?Error*/) {
             env.openFiles--;
             // this might be called after this nThen block closes.
             if (channel.whenLoaded) {
@@ -230,17 +249,19 @@ var getChannel = function (env, id, callback) {
 
 var message = function (env, chanName, msg, cb) {
     getChannel(env, chanName, function (err, chan) {
-        if (err) {
+        if (!chan) {
             cb(err);
             return;
         }
+        let called = false;
         var complete = function (err) {
-            var _cb = cb;
-            cb = undefined;
-            if (_cb) { _cb(err); }
+            if (called) { return; }
+            called = true;
+            cb(err);
         };
         chan.onError.push(complete);
         chan.writeStream.write(msg + '\n', function () {
+            if (!chan) { throw new Error("Flow unreachable"); }
             chan.onError.splice(chan.onError.indexOf(complete) - 1, 1);
             if (!cb) { return; }
             //chan.messages.push(msg);
@@ -252,7 +273,7 @@ var message = function (env, chanName, msg, cb) {
 
 var getMessages = function (env, chanName, handler, cb) {
     getChannel(env, chanName, function (err, chan) {
-        if (err) {
+        if (!chan) {
             cb(err);
             return;
         }
@@ -271,6 +292,7 @@ var getMessages = function (env, chanName, handler, cb) {
                 errorState = true;
                 return void cb(err);
             }
+            if (!chan) { throw new Error("impossible, flow checking"); }
             chan.atime = +new Date();
             cb();
         });
@@ -285,7 +307,26 @@ var channelBytes = function (env, chanName, cb) {
     });
 };
 
-module.exports.create = function (conf, cb) {
+/*::
+export type ChainPadServer_MessageObj_t = { buff: Buffer, offset: Number };
+export type ChainPadServer_Channel_t = { };
+export type ChainPadServer_Storage_t = {
+    message: (channelName:string, content:string, cb:(err:?Error)=>void)=>void,
+    getMessages: (channelName:string, msgHandler:(msg:string)=>void, cb:(err:?Error)=>void)=>void,
+    removeChannel: (channelName:string, cb:(err:?Error)=>void)=>void,
+    closeChannel: (channelName:string, cb:(err:?Error)=>void)=>void,
+    flushUnusedChannels: (cb:()=>void)=>void,
+    getChannelSize: (channelName:string, cb:(err:?Error, size:?number)=>void)=>void,
+    getChannelMetadata: (channelName:string, cb:(err:?Error|string, data:?any)=>void)=>void,
+    clearChannel: (channelName:string, (err:?Error)=>void)=>void
+};
+const flow_Config = require('../config.example.js');
+type Config_t = typeof(flow_Config);
+*/
+module.exports.create = function (
+    conf /*:Config_t*/,
+    cb /*:(store:ChainPadServer_Storage_t)=>void*/
+) {
     var env = {
         root: conf.filePath || './datastore',
         channels: { },
@@ -294,7 +335,8 @@ module.exports.create = function (conf, cb) {
         openFiles: 0,
         openFileLimit: conf.openFileLimit || 2048,
     };
-    Fs.mkdir(env.root, function (err) {
+    // 0x1ff -> 777
+    Fs.mkdir(env.root, 0x1ff, function (err) {
         if (err && err.code !== 'EEXIST') {
             // TODO: somehow return a nice error
             throw err;

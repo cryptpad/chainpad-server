@@ -1,3 +1,13 @@
+/*@flow*/
+/* jshint esversion: 6 */
+/*::
+import type { ChainPadServer_Storage_t } from './storage/file.js';
+const flow_WebSocketServer = require('ws').Server;
+type WebSocketServer_t = typeof(flow_WebSocketServer);
+const flow_Config = require('./config.example.js');
+type Config_t = typeof(flow_Config);
+type Rpc_t = (any, rpcCall:string, (err:?Error, output:Array<string>)=>void)=>void;
+*/
 ;(function () { 'use strict';
 const Crypto = require('crypto');
 const Nacl = require('tweetnacl');
@@ -7,7 +17,6 @@ const LAG_MAX_BEFORE_PING = 15000;
 const HISTORY_KEEPER_ID = Crypto.randomBytes(8).toString('hex');
 
 const USE_HISTORY_KEEPER = true;
-const USE_FILE_BACKUP_STORAGE = true;
 
 let dropUser;
 let historyKeeperKeys = {};
@@ -51,7 +60,7 @@ const storeMessage = function (ctx, channel, msg) {
         if (err && typeof(err) !== 'function') {
             // ignore functions because older datastores
             // might pass waitFors into the callback
-            console.log("Error writing message: " + err);
+            console.log("Error writing message: " + err.message);
         }
     });
 };
@@ -63,7 +72,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
         sendMsg(ctx, user, msgStruct);
       }
     });
-    if (USE_HISTORY_KEEPER && msgStruct[2] === 'MSG') {
+    if (USE_HISTORY_KEEPER && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
         if (historyKeeperKeys[channel.id]) {
             let signedMsg = msgStruct[4].replace(/^cp\|/, '');
             signedMsg = Nacl.util.decodeBase64(signedMsg);
@@ -217,11 +226,23 @@ const getOlderHistory = function (ctx, channelName, oldestKnownHash, cb) {
         }
         messageBuffer.push(parsed);
     }, function (err) {
+        if (err) {
+            console.error(err);
+        }
         cb(messageBuffer);
     });
 };
 
 const randName = function () { return Crypto.randomBytes(16).toString('hex'); };
+
+/*::
+type Chan_t = {
+    indexOf: (any)=>Number,
+    id: string,
+    forEach: ((any)=>void)=>void,
+    push: (any)=>void,
+};
+*/
 
 const handleMessage = function (ctx, user, msg) {
     let json = JSON.parse(msg);
@@ -238,7 +259,7 @@ const handleMessage = function (ctx, user, msg) {
             return;
         }
         let chanName = obj || randName();
-        let chan = ctx.channels[chanName] = ctx.channels[chanName] || [];
+        let chan = ctx.channels[chanName] = ctx.channels[chanName] || (([] /*:any*/) /*:Chan_t*/);
 
         if (chan.indexOf(user) !== -1) {
             sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
@@ -283,7 +304,7 @@ const handleMessage = function (ctx, user, msg) {
                     lastKnownHash = parsed[2].lastKnownHash;
                     owners = parsed[2].owners;
                     if (parsed[2].expire) {
-                        expire = +parsed[2].expire * 1000 + +new Date();
+                        expire = +parsed[2].expire * 1000 + (+new Date());
                     }
                 }
 
@@ -296,7 +317,8 @@ const handleMessage = function (ctx, user, msg) {
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)]);
                 }, function (messages) {
                     if (messages.length === 0 && !historyKeeperKeys[channelName]) {
-                        var key = {channel: channelName};
+                        var key = {};
+                        key.channel = channelName;
                         if (validateKey) {
                             key.validateKey = validateKey;
                             historyKeeperKeys[channelName] = validateKey;
@@ -398,17 +420,22 @@ const handleMessage = function (ctx, user, msg) {
         let err;
         let chan;
         let idx;
-        if (!obj) { err = 'EINVAL'; obj = 'undefined';}
-        if (!err && !(chan = ctx.channels[obj])) { err = 'ENOENT'; }
-        if (!err && (idx = chan.indexOf(user)) === -1) { err = 'NOT_IN_CHAN'; }
-        if (err) {
-            sendMsg(ctx, user, [seq, 'ERROR', err, obj]);
+        if (!obj) {
+            err = 'EINVAL';
+            obj = 'undefined';
+        } else if (!(chan = ctx.channels[obj])) {
+            err = 'ENOENT';
+        } else if ((idx = chan.indexOf(user)) === -1) {
+            err = 'NOT_IN_CHAN';
+        } else {
+            sendMsg(ctx, user, [seq, 'ACK']);
+            json.unshift(user.id);
+            sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chan.id]);
+            chan.splice(idx, 1);
             return;
         }
-        sendMsg(ctx, user, [seq, 'ACK']);
-        json.unshift(user.id);
-        sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chan.id]);
-        chan.splice(idx, 1);
+        sendMsg(ctx, user, [seq, 'ERROR', err, obj]);
+        return;
     }
     if (cmd === 'PING') {
         sendMsg(ctx, user, [seq, 'ACK']);
@@ -416,7 +443,12 @@ const handleMessage = function (ctx, user, msg) {
     }
 };
 
-let run = module.exports.run = function (storage, socketServer, config, rpc) {
+module.exports.run = function (
+    storage /*:ChainPadServer_Storage_t*/,
+    socketServer /*:WebSocketServer_t*/,
+    config /*:Config_t*/,
+    rpc /*:Rpc_t*/)
+{
     /*  Channel removal timeout defaults to 60000ms (one minute) */
     config.channelRemovalTimeout =
         typeof(config.channelRemovalTimeout) === 'number'?
@@ -463,7 +495,7 @@ let run = module.exports.run = function (storage, socketServer, config, rpc) {
                 dropUser(ctx, user);
             }
         });
-        var drop = function (evt) {
+        var drop = function (/*evt*/) {
             for (let userId in ctx.users) {
                 if (ctx.users[userId].socket === socket) {
                     dropUser(ctx, ctx.users[userId]);
