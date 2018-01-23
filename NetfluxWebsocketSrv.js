@@ -29,13 +29,6 @@ const socketSendable = function (socket) {
     return socket && socket.readyState === 1;
 };
 
-const isValidChannelId = function (id) {
-    if (typeof(id) !== 'string') { return false; }
-    if (id.length !== 32) { return false; }
-    if (/[^a-fA-F0-9]/.test(id)) { return false; }
-    return true;
-};
-
 const isBase64 = function (x) {
     return /^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/.test(x);
 };
@@ -125,10 +118,10 @@ const computeIndex = function (ctx, channelName, cb) {
 
 const getIndex = (ctx, channelName, cb) => {
     const chan = ctx.channels[channelName];
-    if (chan.index) { return void cb(undefined, chan.index); }
+    if (chan && chan.index) { return void cb(undefined, chan.index); }
     computeIndex(ctx, channelName, (err, ret) => {
         if (err) { return void cb(err); }
-        chan.index = ret;
+        if (chan) { chan.index = ret; }
         cb(undefined, ret);
     });
 };
@@ -247,7 +240,7 @@ dropUser = function (ctx, user) {
 };
 
 
-const getHistoryOffset = (ctx, channelName, lastKnownHash, cb) => {
+const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?number)=>void*/) => {
     // lastKnownhash === -1 means we want the complete history
     if (lastKnownHash === -1) { return void cb(null, 0); }
     let offset = -1;
@@ -404,11 +397,6 @@ const handleMessage = function (ctx, user, msg) {
                     if (parsed[2].expire) {
                         expire = +parsed[2].expire * 1000 + (+new Date());
                     }
-                }
-
-                if (!isValidChannelId(channelName)) {
-                    sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
-                    return;
                 }
 
                 let msgCount = 0;
@@ -572,6 +560,8 @@ module.exports.run = function (
         store: storage,
         config: config,
         rpc: rpc,
+        // TODO(cjd) This is a dirty mess but we do it so that offsets can be requested by RPC
+        getHistoryOffset: getHistoryOffset
     };
     setInterval(function () {
         Object.keys(ctx.users).forEach(function (userId) {
