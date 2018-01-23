@@ -288,7 +288,7 @@ const getHistoryAsync = (ctx, channelName, lastKnownHash, beforeHash, handler, c
         }));
     }).nThen((waitFor) => {
         if (offset === -1) { return void cb(new Error("could not find offset")); }
-        const start = (beforeHash) ? offset : 0;
+        const start = (beforeHash) ? 0 : offset;
         ctx.store.readMessagesBin(channelName, start, (msgObj, rmcb, abort) => {
             if (beforeHash && msgObj.offset >= offset) { return void abort(); }
             handler(JSON.parse(msgObj.buff.toString('utf8')), rmcb);
