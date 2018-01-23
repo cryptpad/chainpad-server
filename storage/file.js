@@ -33,7 +33,7 @@ var getMetadataAtPath = function (Env, path, cb) {
             complete(undefined, parsed);
         }
         catch (e) {
-            console.log();
+            console.log("getMetadataAtPath");
             console.error(e);
             complete('INVALID_METADATA');
         }
