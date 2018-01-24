@@ -106,7 +106,8 @@ const computeIndex = function (ctx, channelName, cb) {
             if (msg[0] === 0 && msg[2] === 'MSG' && typeof(msg[4]) === 'string') {
                 offsetByHash[getHash(msg[4])] = msgObj.offset;
             }
-            size = msgObj.offset + msgObj.buff.length;
+            // There is a trailing \n at the end of the file
+            size = msgObj.offset + msgObj.buff.length + 1;
         });
         cb(null, {
             cpIndex: cpIndex.slice(-2), // only care about the most recent 2 checkpoints
