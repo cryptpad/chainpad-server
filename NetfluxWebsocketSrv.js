@@ -411,7 +411,28 @@ const handleMessage = function (ctx, user, msg) {
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
                         return;
                     }
-                    if (msgCount === 0 && !historyKeeperKeys[channelName]) {
+
+                    // Here is the dragon
+                    //
+                    // When a channel is created, we want to specify a validate key, this is a ed25519 key
+                    // which is used to validate that messages sent in this channel are ok, meaning that they
+                    // were sent by someone with the actual /edit/ link and not just someone with a /view/
+                    // link.
+                    //
+                    // However, netflux is an API which we don't want to arbitrarily break so for RPC and
+                    // special things, we use HistoryKeeper, a "magic" user which inexplicably joins every
+                    // channel as soon as the user does.
+                    //
+                    // In practice when one creates a new channel, they will invoke a GET_HISTORY request
+                    // right after. This type of request is sent as a private message to the HistoryKeeper
+                    // so it does not have any standardized protocol to follow so the validateKey can be
+                    // packed in this GET_HISTORY message.
+                    //
+                    // If they are not joined to the channel or if the channel does not exist, we skip this
+                    // part.
+                    //
+                    const chan = ctx.channels[channelName];
+                    if (msgCount === 0 && !historyKeeperKeys[channelName] && chan && chan.indexOf(user) > -1) {
                         var key = {};
                         key.channel = channelName;
                         if (validateKey) {
@@ -424,9 +445,10 @@ const handleMessage = function (ctx, user, msg) {
                         if (expire) {
                             key.expire = expire;
                         }
-                        storeMessage(ctx, ctx.channels[channelName], JSON.stringify(key), false, undefined);
+                        storeMessage(ctx, chan, JSON.stringify(key), false, undefined);
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(key)]);
                     }
+
                     let parsedMsg = {state: 1, channel: channelName};
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
                 });
