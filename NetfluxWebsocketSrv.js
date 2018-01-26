@@ -274,7 +274,6 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
 
 const getHistoryAsync = (ctx, channelName, lastKnownHash, beforeHash, handler, cb) => {
     let offset = -1;
-    let index;
     nThen((waitFor) => {
         getHistoryOffset(ctx, channelName, lastKnownHash, waitFor((err, os) => {
             if (err) {
@@ -412,7 +411,11 @@ const handleMessage = function (ctx, user, msg) {
                         send the metadata twice, so let's do a quick check of what we're going to serve...
                     */
                     getIndex(ctx, channelName, waitFor((err, index) => {
-                        if (err) { waitFor.abort(); return cb(err); }
+                        /*  if there's an error here, it should be encountered
+                            and handled by the next nThen block.
+                            so, let's just fall through...
+                        */
+                        if (err) { return w(); }
                         if (!index || !index.metadata) { return void w(); }
                         if (!lastKnownHash && index.cpIndex.length > 1) {
                             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(index.metadata)], w);
