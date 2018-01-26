@@ -79,10 +79,11 @@ const computeIndex = function (ctx, channelName, cb) {
     const cpIndex = [];
     let messageBuf = [];
     let validateKey;
+    let metadata;
     ctx.store.readMessagesBin(channelName, 0, (msgObj, rmcb) => {
         let msg;
         if (!validateKey && msgObj.buff.indexOf('validateKey') > -1) {
-            msg = JSON.parse(msgObj.buff.toString('utf8'));
+            metadata = msg = JSON.parse(msgObj.buff.toString('utf8'));
             if (msg.validateKey) {
                 validateKey = historyKeeperKeys[channelName] = msg.validateKey;
                 return rmcb();
@@ -112,7 +113,8 @@ const computeIndex = function (ctx, channelName, cb) {
         cb(null, {
             cpIndex: cpIndex.slice(-2), // only care about the most recent 2 checkpoints
             offsetByHash: offsetByHash,
-            size: size
+            size: size,
+            metadata: metadata,
         });
     });
 };
@@ -272,6 +274,7 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
 
 const getHistoryAsync = (ctx, channelName, lastKnownHash, beforeHash, handler, cb) => {
     let offset = -1;
+    let index;
     nThen((waitFor) => {
         getHistoryOffset(ctx, channelName, lastKnownHash, waitFor((err, os) => {
             if (err) {
@@ -400,57 +403,76 @@ const handleMessage = function (ctx, user, msg) {
                     }
                 }
 
-                let msgCount = 0;
-                getHistoryAsync(ctx, channelName, lastKnownHash, false, (msg, cb) => {
-                    msgCount++;
-                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)], cb);
-                }, (err) => {
-                    if (err && err.code !== 'ENOENT') {
-                        console.error("GET_HISTORY", err);
-                        const parsedMsg = {error:err.message, channel: channelName};
+                nThen(function (waitFor) {
+                    var w = waitFor();
+
+                    /*  unless this is a young channel, we will serve all messages from an offset
+                        this will not include the channel metadata, so we need to explicitly fetch that.
+                        unfortunately, we can't just serve it blindly, since then young channels will
+                        send the metadata twice, so let's do a quick check of what we're going to serve...
+                    */
+                    getIndex(ctx, channelName, waitFor((err, index) => {
+                        if (err) { waitFor.abort(); return cb(err); }
+                        if (!index || !index.metadata) { return void w(); }
+                        if (!lastKnownHash && index.cpIndex.length > 1) {
+                            sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(index.metadata)], w);
+                            return;
+                        }
+                        w();
+                    }));
+                }).nThen(() => {
+                    let msgCount = 0;
+                    getHistoryAsync(ctx, channelName, lastKnownHash, false, (msg, cb) => {
+                        msgCount++;
+                        sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)], cb);
+                    }, (err) => {
+                        if (err && err.code !== 'ENOENT') {
+                            console.error("GET_HISTORY", err);
+                            const parsedMsg = {error:err.message, channel: channelName};
+                            sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
+                            return;
+                        }
+
+                        // Here is the dragon
+                        //
+                        // When a channel is created, we want to specify a validate key, this is a ed25519 key
+                        // which is used to validate that messages sent in this channel are ok, meaning that they
+                        // were sent by someone with the actual /edit/ link and not just someone with a /view/
+                        // link.
+                        //
+                        // However, netflux is an API which we don't want to arbitrarily break so for RPC and
+                        // special things, we use HistoryKeeper, a "magic" user which inexplicably joins every
+                        // channel as soon as the user does.
+                        //
+                        // In practice when one creates a new channel, they will invoke a GET_HISTORY request
+                        // right after. This type of request is sent as a private message to the HistoryKeeper
+                        // so it does not have any standardized protocol to follow so the validateKey can be
+                        // packed in this GET_HISTORY message.
+                        //
+                        // If they are not joined to the channel or if the channel does not exist, we skip this
+                        // part.
+                        //
+                        const chan = ctx.channels[channelName];
+                        if (msgCount === 0 && !historyKeeperKeys[channelName] && chan && chan.indexOf(user) > -1) {
+                            var key = {};
+                            key.channel = channelName;
+                            if (validateKey) {
+                                key.validateKey = validateKey;
+                                historyKeeperKeys[channelName] = validateKey;
+                            }
+                            if (owners) {
+                                key.owners = owners;
+                            }
+                            if (expire) {
+                                key.expire = expire;
+                            }
+                            storeMessage(ctx, chan, JSON.stringify(key), false, undefined);
+                            sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(key)]);
+                        }
+
+                        let parsedMsg = {state: 1, channel: channelName};
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
-                        return;
-                    }
-
-                    // Here is the dragon
-                    //
-                    // When a channel is created, we want to specify a validate key, this is a ed25519 key
-                    // which is used to validate that messages sent in this channel are ok, meaning that they
-                    // were sent by someone with the actual /edit/ link and not just someone with a /view/
-                    // link.
-                    //
-                    // However, netflux is an API which we don't want to arbitrarily break so for RPC and
-                    // special things, we use HistoryKeeper, a "magic" user which inexplicably joins every
-                    // channel as soon as the user does.
-                    //
-                    // In practice when one creates a new channel, they will invoke a GET_HISTORY request
-                    // right after. This type of request is sent as a private message to the HistoryKeeper
-                    // so it does not have any standardized protocol to follow so the validateKey can be
-                    // packed in this GET_HISTORY message.
-                    //
-                    // If they are not joined to the channel or if the channel does not exist, we skip this
-                    // part.
-                    //
-                    const chan = ctx.channels[channelName];
-                    if (msgCount === 0 && !historyKeeperKeys[channelName] && chan && chan.indexOf(user) > -1) {
-                        var key = {};
-                        key.channel = channelName;
-                        if (validateKey) {
-                            key.validateKey = validateKey;
-                            historyKeeperKeys[channelName] = validateKey;
-                        }
-                        if (owners) {
-                            key.owners = owners;
-                        }
-                        if (expire) {
-                            key.expire = expire;
-                        }
-                        storeMessage(ctx, chan, JSON.stringify(key), false, undefined);
-                        sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(key)]);
-                    }
-
-                    let parsedMsg = {state: 1, channel: channelName};
-                    sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
+                    });
                 });
             } else if (parsed[0] === 'GET_HISTORY_RANGE') {
                 channelName = parsed[1];
