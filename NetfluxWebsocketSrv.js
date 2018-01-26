@@ -403,6 +403,21 @@ const handleMessage = function (ctx, user, msg) {
                 }
 
                 nThen(function (waitFor) {
+                    if (!ctx.tasks) { return; } // tasks are not supported
+                    if (typeof(expire) !== 'number') { return; }
+
+                    // the fun part...
+                    // the user has said they want this pad to expire at some point
+                    ctx.tasks.write(expire, "EXPIRE", [ channelName ], waitFor(function (err) {
+                        if (err) {
+                            // if there is an error, we don't want to crash the whole server...
+                            // just log it, and if there's a problem you'll be able to fix it
+                            // at a later date with the provided information
+                            console.error('Failed to write expiration to disk:', err);
+                            console.error([time, 'EXPIRE', channelName]);
+                        }
+                    }));
+                }).nThen(function (waitFor) {
                     var w = waitFor();
 
                     /*  unless this is a young channel, we will serve all messages from an offset
@@ -608,6 +623,7 @@ module.exports.run = function (
         store: storage,
         config: config,
         rpc: rpc,
+        tasks: config.tasks,
         // TODO(cjd) This is a dirty mess but we do it so that offsets can be requested by RPC
         getHistoryOffset: getHistoryOffset
     };
