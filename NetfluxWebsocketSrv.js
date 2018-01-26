@@ -414,7 +414,7 @@ const handleMessage = function (ctx, user, msg) {
                             // just log it, and if there's a problem you'll be able to fix it
                             // at a later date with the provided information
                             console.error('Failed to write expiration to disk:', err);
-                            console.error([time, 'EXPIRE', channelName]);
+                            console.error([expire, 'EXPIRE', channelName]);
                         }
                     }));
                 }).nThen(function (waitFor) {
