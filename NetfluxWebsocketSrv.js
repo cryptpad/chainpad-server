@@ -404,7 +404,7 @@ const handleMessage = function (ctx, user, msg) {
 
                 nThen(function (waitFor) {
                     if (!ctx.tasks) { return; } // tasks are not supported
-                    if (typeof(expire) !== 'number') { return; }
+                    if (typeof(expire) !== 'number' || !expire) { return; }
 
                     // the fun part...
                     // the user has said they want this pad to expire at some point
