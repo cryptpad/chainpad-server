@@ -75,6 +75,14 @@ const sendMsg = function (ctx, user, msg, cb) {
     }
 };
 
+const tryParse = function (str) {
+    try {
+        return JSON.parse(str);
+    } catch (err) {
+        console.error(err);
+    }
+};
+
 const computeIndex = function (ctx, channelName, cb) {
     const cpIndex = [];
     let messageBuf = [];
@@ -83,14 +91,16 @@ const computeIndex = function (ctx, channelName, cb) {
     ctx.store.readMessagesBin(channelName, 0, (msgObj, rmcb) => {
         let msg;
         if (!validateKey && msgObj.buff.indexOf('validateKey') > -1) {
-            metadata = msg = JSON.parse(msgObj.buff.toString('utf8'));
+            metadata = msg = tryParse(msgObj.buff.toString('utf8'));
+            if (typeof msg === "undefined") { return rmcb(); }
             if (msg.validateKey) {
                 validateKey = historyKeeperKeys[channelName] = msg.validateKey;
                 return rmcb();
             }
         }
         if (msgObj.buff.indexOf('cp|') > -1) {
-            msg = msg || JSON.parse(msgObj.buff.toString('utf8'));
+            msg = msg || tryParse(msgObj.buff.toString('utf8'));
+            if (typeof msg === "undefined") { return rmcb(); }
             if (msg[2] === 'MSG' && msg[4].indexOf('cp|') === 0) {
                 cpIndex.push(msgObj.offset);
                 messageBuf = [];
@@ -103,7 +113,8 @@ const computeIndex = function (ctx, channelName, cb) {
         const offsetByHash = {};
         let size = 0;
         messageBuf.forEach((msgObj) => {
-            const msg = JSON.parse(msgObj.buff.toString('utf8'));
+            const msg = tryParse(msgObj.buff.toString('utf8'));
+            if (typeof msg === "undefined") { return; }
             if (msg[0] === 0 && msg[2] === 'MSG' && typeof(msg[4]) === 'string') {
                 offsetByHash[getHash(msg[4])] = msgObj.offset;
             }
@@ -258,7 +269,8 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
     }).nThen((waitFor) => {
         if (offset !== -1) { return; }
         ctx.store.readMessagesBin(channelName, 0, (msgObj, rmcb, abort) => {
-            const msg = JSON.parse(msgObj.buff.toString('utf8'));
+            const msg = tryParse(msgObj.buff.toString('utf8'));
+            if (typeof msg === "undefined") { return rmcb(); }
             if (typeof(msg[4]) !== 'string' || lastKnownHash !== getHash(msg[4])) {
                 return void rmcb();
             }
@@ -287,7 +299,7 @@ const getHistoryAsync = (ctx, channelName, lastKnownHash, beforeHash, handler, c
         const start = (beforeHash) ? 0 : offset;
         ctx.store.readMessagesBin(channelName, start, (msgObj, rmcb, abort) => {
             if (beforeHash && msgObj.offset >= offset) { return void abort(); }
-            handler(JSON.parse(msgObj.buff.toString('utf8')), rmcb);
+            handler(tryParse(msgObj.buff.toString('utf8')), rmcb);
         }, waitFor(function (err) {
             return void cb(err);
         }));
@@ -300,7 +312,9 @@ const getOlderHistory = function (ctx, channelName, oldestKnownHash, cb) {
     ctx.store.getMessages(channelName, function (msgStr) {
         if (found) { return; }
 
-        let parsed = JSON.parse(msgStr);
+        let parsed = tryParse(msgStr);
+        if (typeof parsed === "undefined") { return; }
+
         if (parsed.validateKey) {
             historyKeeperKeys[channelName] = parsed.validateKey;
             return;
@@ -441,6 +455,7 @@ const handleMessage = function (ctx, user, msg) {
                 }).nThen(() => {
                     let msgCount = 0;
                     getHistoryAsync(ctx, channelName, lastKnownHash, false, (msg, cb) => {
+                        if (!msg) { return; }
                         msgCount++;
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)], cb);
                     }, (err) => {
@@ -531,6 +546,7 @@ const handleMessage = function (ctx, user, msg) {
                 // parsed[3] is the last known hash (optionnal)
                 sendMsg(ctx, user, [seq, 'ACK']);
                 getHistoryAsync(ctx, parsed[1], -1, false, (msg, cb) => {
+                    if (!msg) { return; }
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(['FULL_HISTORY', msg])], cb);
                 }, (err) => {
                     let parsedMsg = ['FULL_HISTORY_END', parsed[1]];
