@@ -94,7 +94,7 @@ const computeIndex = function (ctx, channelName, cb) {
             metadata = msg = tryParse(msgObj.buff.toString('utf8'));
             if (typeof msg === "undefined") { return rmcb(); }
             if (msg.validateKey) {
-                validateKey = historyKeeperKeys[channelName] = msg.validateKey;
+                validateKey = historyKeeperKeys[channelName] = msg;
                 return rmcb();
             }
         }
@@ -181,11 +181,11 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
     });
     if (USE_HISTORY_KEEPER && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
         const isCp = /^cp\|/.test(msgStruct[4]);
-        if (historyKeeperKeys[channel.id]) {
+        if (historyKeeperKeys[channel.id] && historyKeeperKeys[channel.id].validateKey) {
             /*::if (typeof(msgStruct[4]) !== 'string') { throw new Error(); }*/
             let signedMsg = (isCp) ? msgStruct[4].replace(/^cp\|/, '') : msgStruct[4];
             signedMsg = Nacl.util.decodeBase64(signedMsg);
-            const validateKey = Nacl.util.decodeBase64(historyKeeperKeys[channel.id]);
+            const validateKey = Nacl.util.decodeBase64(historyKeeperKeys[channel.id].validateKey);
             const validated = Nacl.sign.open(signedMsg, validateKey);
             if (!validated) {
                 console.log("Signed message rejected");
@@ -316,7 +316,7 @@ const getOlderHistory = function (ctx, channelName, oldestKnownHash, cb) {
         if (typeof parsed === "undefined") { return; }
 
         if (parsed.validateKey) {
-            historyKeeperKeys[channelName] = parsed.validateKey;
+            historyKeeperKeys[channelName] = parsed;
             return;
         }
 
@@ -346,6 +346,29 @@ type Chan_t = {
     push: (any)=>void,
 };
 */
+
+
+// Check if the selector channel (obj) is expired
+// If it is, remove it from memory and broadcast a message to its members
+const checkExpired = function (ctx, user, seq, obj) {
+    if (obj && obj.length === 32 && historyKeeperKeys[obj] && historyKeeperKeys[obj].expire &&
+        historyKeeperKeys[obj].expire < +new Date()) {
+        ctx.store.closeChannel(obj, function () {
+            let chan = ctx.channels[obj] || (([] /*:any*/) /*:Chan_t*/);
+
+            chan.forEach(function (user) {
+                sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify({
+                    error: 'EEXPIRED',
+                    channel: obj
+                })]);
+            });
+        });
+        delete ctx.channels[obj];
+        delete historyKeeperKeys[obj];
+        return true;
+    }
+    return;
+};
 
 const handleMessage = function (ctx, user, msg) {
     let json = JSON.parse(msg);
@@ -388,6 +411,8 @@ const handleMessage = function (ctx, user, msg) {
 
     var channelName;
     if (cmd === 'MSG') {
+        checkExpired(ctx, user, seq, obj);
+
         if (obj === HISTORY_KEEPER_ID) {
             let parsed;
             try {
@@ -396,13 +421,18 @@ const handleMessage = function (ctx, user, msg) {
                 console.error("handleMessage(JSON.parse)", err);
                 return;
             }
+
+            // If the requested history is for an expired channel, abort
+            // Note the if we don't have the keys for that channel in historyKeeperKeys, we'll
+            // have to abort later (once we know the expiration time)
+            if (checkExpired(ctx, user, seq, parsed[1])) { return; }
+
             if (parsed[0] === 'GET_HISTORY') {
                 // parsed[1] is the channel id
                 // parsed[2] is a validation key (optionnal)
                 // parsed[3] is the last known hash (optionnal)
                 sendMsg(ctx, user, [seq, 'ACK']);
-
-                channelName = parsed[1];
+                var channelName = parsed[1];
                 var validateKey = parsed[2];
                 var lastKnownHash = parsed[3];
                 var owners;
@@ -447,6 +477,11 @@ const handleMessage = function (ctx, user, msg) {
                         if (err) { return w(); }
                         if (!index || !index.metadata) { return void w(); }
                         if (!lastKnownHash && index.cpIndex.length > 1) {
+                            // Store the metadata if we don't have it in memory
+                            if (!historyKeeperKeys[channelName]) { historyKeeperKeys[channelName] = index.metadata; }
+                            // And then check if the channel is expired. If it is, send the error and abort
+                            if (checkExpired(ctx, user, seq, channelName)) { return void waitFor.abort(); }
+
                             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(index.metadata)], w);
                             return;
                         }
@@ -454,11 +489,23 @@ const handleMessage = function (ctx, user, msg) {
                     }));
                 }).nThen(() => {
                     let msgCount = 0;
+                    let time = +new Date();
+                    let expired = false;
                     getHistoryAsync(ctx, channelName, lastKnownHash, false, (msg, cb) => {
                         if (!msg) { return; }
+                        if (msg.validateKey) {
+                            // If it is a young channel, this is the part where we get the metadata
+                            // Check if the channel is expired and abort if it is.
+                            if (!historyKeeperKeys[channelName]) { historyKeeperKeys[channelName] = msg; }
+                            expired = checkExpired(ctx, user, seq, channelName);
+                        }
+                        if (expired) { return void cb(); }
                         msgCount++;
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)], cb);
                     }, (err) => {
+                        // If the pad is expired, stop here, we've already sent the error message
+                        if (expired) { return; }
+
                         if (err && err.code !== 'ENOENT') {
                             console.error("GET_HISTORY", err);
                             const parsedMsg = {error:err.message, channel: channelName};
@@ -491,7 +538,6 @@ const handleMessage = function (ctx, user, msg) {
                             key.channel = channelName;
                             if (validateKey) {
                                 key.validateKey = validateKey;
-                                historyKeeperKeys[channelName] = validateKey;
                             }
                             if (owners) {
                                 key.owners = owners;
@@ -499,6 +545,7 @@ const handleMessage = function (ctx, user, msg) {
                             if (expire) {
                                 key.expire = expire;
                             }
+                            historyKeeperKeys[channelName] = key;
                             storeMessage(ctx, chan, JSON.stringify(key), false, undefined);
                             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(key)]);
                         }
