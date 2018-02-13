@@ -432,7 +432,7 @@ const handleMessage = function (ctx, user, msg) {
                 // parsed[2] is a validation key (optionnal)
                 // parsed[3] is the last known hash (optionnal)
                 sendMsg(ctx, user, [seq, 'ACK']);
-                var channelName = parsed[1];
+                channelName = parsed[1];
                 var validateKey = parsed[2];
                 var lastKnownHash = parsed[3];
                 var owners;
@@ -489,7 +489,6 @@ const handleMessage = function (ctx, user, msg) {
                     }));
                 }).nThen(() => {
                     let msgCount = 0;
-                    let time = +new Date();
                     let expired = false;
                     getHistoryAsync(ctx, channelName, lastKnownHash, false, (msg, cb) => {
                         if (!msg) { return; }
