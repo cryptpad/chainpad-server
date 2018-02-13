@@ -181,6 +181,10 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
     });
     if (USE_HISTORY_KEEPER && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
         const isCp = /^cp\|/.test(msgStruct[4]);
+        if (historyKeeperKeys[channel.id] && historyKeeperKeys[channel.id].expire &&
+                historyKeeperKeys[channel.id].expire < +new Date()) {
+            return; // Don't store messages on expired server
+        }
         if (historyKeeperKeys[channel.id] && historyKeeperKeys[channel.id].validateKey) {
             /*::if (typeof(msgStruct[4]) !== 'string') { throw new Error(); }*/
             let signedMsg = (isCp) ? msgStruct[4].replace(/^cp\|/, '') : msgStruct[4];
