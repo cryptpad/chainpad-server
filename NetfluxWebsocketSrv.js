@@ -352,23 +352,36 @@ type Chan_t = {
 */
 
 
-// Check if the selector channel (obj) is expired
+const historyKeeperBroadcast = function (ctx, channel, msg) {
+    let chan = ctx.channels[channel] || (([] /*:any*/) /*:Chan_t*/);
+    chan.forEach(function (user) {
+        sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)]);
+    });
+};
+// Chen a channel is removed from datastore, broadcast a message to all its connected users
+const onChannelDeleted = function (ctx, channel) {
+    ctx.store.closeChannel(channel, function () {
+        historyKeeperBroadcast(ctx, channel, {
+            error: 'EDELETED',
+            channel: channel
+        });
+    });
+    delete ctx.channels[channel];
+    delete historyKeeperKeys[channel];
+};
+// Check if the selector channel is expired
 // If it is, remove it from memory and broadcast a message to its members
-const checkExpired = function (ctx, user, seq, obj) {
-    if (obj && obj.length === 32 && historyKeeperKeys[obj] && historyKeeperKeys[obj].expire &&
-        historyKeeperKeys[obj].expire < +new Date()) {
-        ctx.store.closeChannel(obj, function () {
-            let chan = ctx.channels[obj] || (([] /*:any*/) /*:Chan_t*/);
-
-            chan.forEach(function (user) {
-                sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify({
-                    error: 'EEXPIRED',
-                    channel: obj
-                })]);
+const checkExpired = function (ctx, channel) {
+    if (channel && channel.length === 32 && historyKeeperKeys[channel] &&
+            historyKeeperKeys[channel].expire && historyKeeperKeys[channel].expire < +new Date()) {
+        ctx.store.closeChannel(channel, function () {
+            historyKeeperBroadcast(ctx, channel, {
+                error: 'EEXPIRED',
+                channel: channel
             });
         });
-        delete ctx.channels[obj];
-        delete historyKeeperKeys[obj];
+        delete ctx.channels[channel];
+        delete historyKeeperKeys[channel];
         return true;
     }
     return;
@@ -415,7 +428,7 @@ const handleMessage = function (ctx, user, msg) {
 
     var channelName;
     if (cmd === 'MSG') {
-        checkExpired(ctx, user, seq, obj);
+        checkExpired(ctx, obj);
 
         if (obj === HISTORY_KEEPER_ID) {
             let parsed;
@@ -429,7 +442,7 @@ const handleMessage = function (ctx, user, msg) {
             // If the requested history is for an expired channel, abort
             // Note the if we don't have the keys for that channel in historyKeeperKeys, we'll
             // have to abort later (once we know the expiration time)
-            if (checkExpired(ctx, user, seq, parsed[1])) { return; }
+            if (checkExpired(ctx, parsed[1])) { return; }
 
             if (parsed[0] === 'GET_HISTORY') {
                 // parsed[1] is the channel id
@@ -484,7 +497,7 @@ const handleMessage = function (ctx, user, msg) {
                             // Store the metadata if we don't have it in memory
                             if (!historyKeeperKeys[channelName]) { historyKeeperKeys[channelName] = index.metadata; }
                             // And then check if the channel is expired. If it is, send the error and abort
-                            if (checkExpired(ctx, user, seq, channelName)) { return void waitFor.abort(); }
+                            if (checkExpired(ctx, channelName)) { return void waitFor.abort(); }
 
                             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(index.metadata)], w);
                             return;
@@ -500,7 +513,7 @@ const handleMessage = function (ctx, user, msg) {
                             // If it is a young channel, this is the part where we get the metadata
                             // Check if the channel is expired and abort if it is.
                             if (!historyKeeperKeys[channelName]) { historyKeeperKeys[channelName] = msg; }
-                            expired = checkExpired(ctx, user, seq, channelName);
+                            expired = checkExpired(ctx, channelName);
                         }
                         if (expired) { return void cb(); }
                         msgCount++;
@@ -617,6 +630,11 @@ const handleMessage = function (ctx, user, msg) {
                     if (err) {
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify([parsed[0], 'ERROR', err])]);
                         return;
+                    }
+                    var msg = rpc_call[0].slice();
+                    if (msg[3] === 'REMOVE_OWNED_CHANNEL') {
+                        var chanId = msg[4];
+                        onChannelDeleted(ctx, chanId);
                     }
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify([parsed[0]].concat(output))]);
                 });
