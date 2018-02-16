@@ -183,7 +183,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
         const isCp = /^cp\|/.test(msgStruct[4]);
         if (historyKeeperKeys[channel.id] && historyKeeperKeys[channel.id].expire &&
                 historyKeeperKeys[channel.id].expire < +new Date()) {
-            return; // Don't store messages on expired server
+            return; // Don't store messages on expired channel
         }
         if (historyKeeperKeys[channel.id] && historyKeeperKeys[channel.id].validateKey) {
             /*::if (typeof(msgStruct[4]) !== 'string') { throw new Error(); }*/
@@ -358,7 +358,7 @@ const historyKeeperBroadcast = function (ctx, channel, msg) {
         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)]);
     });
 };
-// Chen a channel is removed from datastore, broadcast a message to all its connected users
+// When a channel is removed from datastore, broadcast a message to all its connected users
 const onChannelDeleted = function (ctx, channel) {
     ctx.store.closeChannel(channel, function () {
         historyKeeperBroadcast(ctx, channel, {
@@ -369,7 +369,7 @@ const onChannelDeleted = function (ctx, channel) {
     delete ctx.channels[channel];
     delete historyKeeperKeys[channel];
 };
-// Check if the selector channel is expired
+// Check if the selected channel is expired
 // If it is, remove it from memory and broadcast a message to its members
 const checkExpired = function (ctx, channel) {
     if (channel && channel.length === 32 && historyKeeperKeys[channel] &&
