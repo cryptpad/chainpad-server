@@ -188,7 +188,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
         let id;
         if (isCp) {
             id = /cp\|(([A-Za-z0-9+\/=]+)\|)?/.exec(msgStruct[4]);
-            if (Array.isArray(id) && id[2] === channel.lastSavedCp) {
+            if (Array.isArray(id) && id[2] && id[2] === channel.lastSavedCp) {
                 // Reject duplicate checkpoints
                 return;
             }
@@ -280,7 +280,13 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
         getIndex(ctx, channelName, waitFor((err, index) => {
             if (err) { waitFor.abort(); return void cb(err); }
             // Since last 2 checkpoints
-            if (!lastKnownHash) { return void cb(null, index.cpIndex[0]); }
+            if (!lastKnownHash) {
+                waitFor.abort();
+                // Less than 2 checkpoints in the history: return everything
+                if (index.cpIndex.length < 2) { return void cb(null, 0); }
+                // Otherwise return the second last checkpoint's index
+                return void cb(null, index.cpIndex[0]);
+            }
             const lkh = index.offsetByHash[lastKnownHash];
             if (typeof(lkh) === 'number') { offset = lkh; }
         }));
