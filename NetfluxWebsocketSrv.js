@@ -185,15 +185,29 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
                 historyKeeperKeys[channel.id].expire < +new Date()) {
             return; // Don't store messages on expired channel
         }
+        let id;
+        if (isCp) {
+            id = /cp\|(([A-Za-z0-9+\/=]+)\|)?/.exec(msgStruct[4]);
+            if (Array.isArray(id) && id[2] === channel.lastSavedCp) {
+                // Reject duplicate checkpoints
+                return;
+            }
+        }
         if (historyKeeperKeys[channel.id] && historyKeeperKeys[channel.id].validateKey) {
             /*::if (typeof(msgStruct[4]) !== 'string') { throw new Error(); }*/
-            let signedMsg = (isCp) ? msgStruct[4].replace(/^cp\|/, '') : msgStruct[4];
+            let signedMsg = (isCp) ? msgStruct[4].replace(/^cp\|(([A-Za-z0-9+\/=]+)\|)?/, '') : msgStruct[4];
             signedMsg = Nacl.util.decodeBase64(signedMsg);
             const validateKey = Nacl.util.decodeBase64(historyKeeperKeys[channel.id].validateKey);
             const validated = Nacl.sign.open(signedMsg, validateKey);
             if (!validated) {
                 console.log("Signed message rejected");
                 return;
+            }
+        }
+        if (isCp) {
+            if (Array.isArray(id) && id[2]) {
+                // Store new checkpoint hash
+                channel.lastSavedCp = id[2];
             }
         }
         storeMessage(ctx, channel, JSON.stringify(msgStruct), isCp, getHash(msgStruct[4]));
