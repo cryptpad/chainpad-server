@@ -187,6 +187,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
         }
         let id;
         if (isCp) {
+            /*::if (typeof(msgStruct[4]) !== 'string') { throw new Error(); }*/
             id = /cp\|(([A-Za-z0-9+\/=]+)\|)?/.exec(msgStruct[4]);
             if (Array.isArray(id) && id[2] && id[2] === channel.lastSavedCp) {
                 // Reject duplicate checkpoints
@@ -366,6 +367,7 @@ const randName = function () { return Crypto.randomBytes(16).toString('hex'); };
 type Chan_t = {
     indexOf: (any)=>number,
     id: string,
+    lastSavedCp: string,
     forEach: ((any)=>void)=>void,
     push: (any)=>void,
 };
