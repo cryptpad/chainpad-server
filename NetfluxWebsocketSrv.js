@@ -206,6 +206,10 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
             }
         }
         if (isCp) {
+            // WARNING: the fact that we only check the most recent checkpoints
+            // is a potential source of bugs if one editor has high latency and
+            // pushes a duplicate of an earlier checkpoint than the latest which
+            // has been pushed by editors with low latency
             if (Array.isArray(id) && id[2]) {
                 // Store new checkpoint hash
                 channel.lastSavedCp = id[2];
@@ -287,6 +291,14 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
                 if (index.cpIndex.length < 2) { return void cb(null, 0); }
                 // Otherwise return the second last checkpoint's index
                 return void cb(null, index.cpIndex[0]);
+                /* LATER...
+                    in practice, two checkpoints can be very close together
+                    we have measures to avoid duplicate checkpoints, but editors
+                    can produce nearby checkpoints which are slightly different,
+                    and slip past these protections. To be really careful, we can
+                    seek past nearby checkpoints by some number of patches so as
+                    to ensure that all editors have sufficient knowledge of history
+                    to reconcile their differences. */
             }
             const lkh = index.offsetByHash[lastKnownHash];
             if (typeof(lkh) === 'number') { offset = lkh; }
