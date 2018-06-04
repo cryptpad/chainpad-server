@@ -26,7 +26,7 @@ let historyKeeperKeys = {};
 const now = function () { return (new Date()).getTime(); };
 
 const socketSendable = function (socket) {
-    return socket && socket.readyState === 1;
+    return socket && socket.connected;
 };
 
 const isBase64 = function (x) {
@@ -57,17 +57,16 @@ const sendMsg = function (ctx, user, msg, cb) {
         if (ctx.config.logToStdout) { console.log('<' + strMsg); }
         user.inQueue += strMsg.length;
         if (cb) { user.sendMsgCallbacks.push(cb); }
-        user.socket.send(strMsg, () => {
-            user.inQueue -= strMsg.length;
-            if (user.inQueue > QUEUE_CHR) { return; }
-            const smcb = user.sendMsgCallbacks;
-            user.sendMsgCallbacks = [];
-            try {
-                smcb.forEach((cb)=>{cb();});
-            } catch (e) {
-                console.error('Error thrown by sendMsg callback', e);
-            }
-        });
+        user.socket.send(strMsg);
+        user.inQueue -= strMsg.length;
+        if (user.inQueue > QUEUE_CHR) { return; }
+        const smcb = user.sendMsgCallbacks;
+        user.sendMsgCallbacks = [];
+        try {
+            smcb.forEach((cb)=>{cb();});
+        } catch (e) {
+            console.error('Error thrown by sendMsg callback', e);
+        }
     } catch (e) {
         console.log("sendMsg()");
         console.log(e.stack);
@@ -224,14 +223,9 @@ dropUser = function (ctx, user) {
         && user.socket.readyState !== 3 /* WebSocket.CLOSED */)
     {
         try {
-            user.socket.close();
+            user.socket.disconnect(true);
         } catch (e) {
             console.log("Failed to disconnect ["+user.id+"], attempting to terminate");
-            try {
-                user.socket.terminate();
-            } catch (ee) {
-                console.log("Failed to terminate ["+user.id+"]  *shrug*");
-            }
         }
     }
     delete ctx.users[user.id];
@@ -780,8 +774,7 @@ module.exports.run = function (
         }
     }, 5000);
     socketServer.on('connection', function(socket) {
-        if(socket.upgradeReq.url !== (config.websocketPath || '/cryptpad_websocket')) { return; }
-        let conn = socket.upgradeReq.connection;
+        let conn = socket.conn;
         let user = {
             addr: conn.remoteAddress + '|' + conn.remotePort,
             socket: socket,
@@ -810,7 +803,7 @@ module.exports.run = function (
                 }
             }
         };
-        socket.on('close', drop);
+        socket.on('disconnect', drop);
         socket.on('error', function (err) {
             console.error('WebSocket Error: ' + err.message);
             drop();
