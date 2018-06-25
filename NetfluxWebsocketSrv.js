@@ -611,12 +611,10 @@ const handleMessage = function (ctx, user, msg) {
 
                 var oldestKnownHash = map.from;
                 var desiredMessages = map.count;
+                var desiredCheckpoint = map.cpCount;
                 var txid = map.txid;
-                if (typeof(desiredMessages) !== 'number') {
+                if (typeof(desiredMessages) !== 'number' && typeof(desiredCheckpoint) !== 'number') {
                     return void sendMsg(ctx, user, [seq, 'ERROR', 'UNSPECIFIED_COUNT', obj]);
-                }
-                if (!isValidHash(oldestKnownHash)) {
-                    return void sendMsg(ctx, user, [seq, 'ERROR', 'INVALID_HASH', obj]);
                 }
 
                 if (!txid) {
@@ -625,7 +623,19 @@ const handleMessage = function (ctx, user, msg) {
 
                 sendMsg(ctx, user, [seq, 'ACK']);
                 return void getOlderHistory(ctx, channelName, oldestKnownHash, function (messages) {
-                    var toSend = messages.slice(-desiredMessages);
+                    var toSend = [];
+                    if (typeof (desiredMessages) === "number") {
+                        toSend = messages.slice(-desiredMessages);
+                    } else {
+                        let cpCount = 0;
+                        for (var i = messages.length - 1; i >= 0; i--) {
+                            if (/^cp\|/.test(messages[i][4]) && i !== (messages.length - 1)) {
+                                cpCount++;
+                            }
+                            toSend.unshift(messages[i]);
+                            if (cpCount >= desiredCheckpoint) { break; }
+                        }
+                    }
                     toSend.forEach(function (msg) {
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id,
                             JSON.stringify(['HISTORY_RANGE', txid, msg])]);
