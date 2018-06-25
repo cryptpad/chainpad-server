@@ -215,6 +215,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
                 channel.lastSavedCp = id[2];
             }
         }
+        msgStruct.push(now());
         storeMessage(ctx, channel, JSON.stringify(msgStruct), isCp, getHash(msgStruct[4]));
     }
 };
@@ -546,6 +547,7 @@ const handleMessage = function (ctx, user, msg) {
                         }
                         if (expired) { return void cb(); }
                         msgCount++;
+
                         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)], cb);
                     }, (err) => {
                         // If the pad is expired, stop here, we've already sent the error message
