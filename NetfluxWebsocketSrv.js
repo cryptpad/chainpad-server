@@ -233,6 +233,7 @@ dropUser = function (ctx, user) {
     delete ctx.users[user.id];
     Object.keys(ctx.channels).forEach(function (chanName) {
         let chan = ctx.channels[chanName];
+        if (!chan) { return; }
         let idx = chan.indexOf(user);
         if (idx < 0) { return; }
 
