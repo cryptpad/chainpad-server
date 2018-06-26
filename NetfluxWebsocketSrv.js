@@ -57,17 +57,16 @@ const sendMsg = function (ctx, user, msg, cb) {
         if (ctx.config.logToStdout) { console.log('<' + strMsg); }
         user.inQueue += strMsg.length;
         if (cb) { user.sendMsgCallbacks.push(cb); }
-        user.socket.send(strMsg, () => {
-            user.inQueue -= strMsg.length;
-            if (user.inQueue > QUEUE_CHR) { return; }
-            const smcb = user.sendMsgCallbacks;
-            user.sendMsgCallbacks = [];
-            try {
-                smcb.forEach((cb)=>{cb();});
-            } catch (e) {
-                console.error('Error thrown by sendMsg callback', e);
-            }
-        });
+        user.socket.send(strMsg);
+        user.inQueue -= strMsg.length;
+        if (user.inQueue > QUEUE_CHR) { return; }
+        const smcb = user.sendMsgCallbacks;
+        user.sendMsgCallbacks = [];
+        try {
+            smcb.forEach((cb)=>{cb();});
+        } catch (e) {
+            console.error('Error thrown by sendMsg callback', e);
+        }
     } catch (e) {
         console.log("sendMsg()");
         console.log(e.stack);
