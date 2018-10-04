@@ -441,7 +441,7 @@ const handleMessage = function (ctx, user, msg) {
         let chan = ctx.channels[chanName] = ctx.channels[chanName] || (([] /*:any*/) /*:Chan_t*/);
 
         if (chan.indexOf(user) !== -1) {
-            // If the user is already in the channel, son't add it again.
+            // If the user is already in the channel, don't add it again.
             // Send an EJOINED, and send the userlist.
             // Don't broadcast the JOIN to the channel because other members
             // already know this user is in the channel.
