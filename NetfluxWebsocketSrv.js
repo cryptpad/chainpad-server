@@ -29,7 +29,7 @@ const socketSendable = function (socket) {
     return socket && socket.readyState === 1;
 };
 
-const isBase64 = function (x) {
+/*const isBase64 = function (x) {
     return /^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/.test(x);
 };
 
@@ -37,7 +37,7 @@ const isValidHash = function (hash) {
     if (typeof(hash) !== 'string') { return false; }
     if (hash.length !== 64) { return false; }
     return isBase64(hash);
-};
+};*/
 
 const getHash = function (msg) {
     if (typeof(msg) !== 'string') {
@@ -441,7 +441,17 @@ const handleMessage = function (ctx, user, msg) {
         let chan = ctx.channels[chanName] = ctx.channels[chanName] || (([] /*:any*/) /*:Chan_t*/);
 
         if (chan.indexOf(user) !== -1) {
+            // If the user is already in the channel, son't add it again.
+            // Send an EJOINED, and send the userlist.
+            // Don't broadcast the JOIN to the channel because other members
+            // already know this user is in the channel.
             sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
+            if (USE_HISTORY_KEEPER) { sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'JOIN', chanName]); }
+            chan.forEach(function (u) {
+                if (u === user) { return; }
+                sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
+            });
+            sendMsg(ctx, user, [0, user.id, 'JOIN', chanName]);
             return;
         }
 
