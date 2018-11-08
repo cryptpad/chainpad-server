@@ -151,7 +151,7 @@ const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
                 return;
             }
             if (isCp) {
-                index.cpIndex.shift();
+                if (index.cpIndex.length === 2) { index.cpIndex.shift(); }
                 for (let k in index.offsetByHash) {
                     if (index.offsetByHash[k] < index.cpIndex[0]) {
                         delete index.offsetByHash[k];
