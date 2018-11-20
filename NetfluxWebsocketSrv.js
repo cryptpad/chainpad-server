@@ -83,13 +83,23 @@ const tryParse = function (str) {
     }
 };
 
+const sliceCpIndex = function (cpIndex, line) {
+    // Remove "old" checkpoints (cp sent before 100 messages ago)
+    const minLine = Math.max(0, (line - 100));
+    return cpIndex.filter(function (obj) {
+        return obj.line > minLine;
+    });
+};
+
 const computeIndex = function (ctx, channelName, cb) {
     const cpIndex = [];
     let messageBuf = [];
     let validateKey;
     let metadata;
+    let i = 0;
     ctx.store.readMessagesBin(channelName, 0, (msgObj, rmcb) => {
         let msg;
+        i++;
         if (!validateKey && msgObj.buff.indexOf('validateKey') > -1) {
             metadata = msg = tryParse(msgObj.buff.toString('utf8'));
             if (typeof msg === "undefined") { return rmcb(); }
@@ -102,7 +112,10 @@ const computeIndex = function (ctx, channelName, cb) {
             msg = msg || tryParse(msgObj.buff.toString('utf8'));
             if (typeof msg === "undefined") { return rmcb(); }
             if (msg[2] === 'MSG' && msg[4].indexOf('cp|') === 0) {
-                cpIndex.push(msgObj.offset);
+                cpIndex.push({
+                    offset: msgObj.offset,
+                    line: i
+                });
                 messageBuf = [];
             }
         }
@@ -122,10 +135,12 @@ const computeIndex = function (ctx, channelName, cb) {
             size = msgObj.offset + msgObj.buff.length + 1;
         });
         cb(null, {
-            cpIndex: cpIndex.slice(-2), // only care about the most recent 2 checkpoints
+            // Only keep the checkpoints included in the last 100 messages
+            cpIndex: sliceCpIndex(cpIndex, i),
             offsetByHash: offsetByHash,
             size: size,
             metadata: metadata,
+            line: i
         });
     });
 };
@@ -150,14 +165,18 @@ const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
                 // non-critical, we'll be able to get the channel index later
                 return;
             }
+            if (typeof (index.line) === "number") { index.line++ }
             if (isCp) {
-                if (index.cpIndex.length === 2) { index.cpIndex.shift(); }
+                index.cpIndex = sliceCpIndex(index.cpIndex, index.line || 0);
                 for (let k in index.offsetByHash) {
                     if (index.offsetByHash[k] < index.cpIndex[0]) {
                         delete index.offsetByHash[k];
                     }
                 }
-                index.cpIndex.push(index.size);
+                index.cpIndex.push({
+                    offset: index.size,
+                    line: ((index.line || 0) + 1)
+                });
             }
             if (maybeMsgHash) { index.offsetByHash[maybeMsgHash] = index.size; }
             index.size += msgBin.length;
@@ -165,7 +184,7 @@ const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
     }).nThen((waitFor) => {
         ctx.store.messageBin(channel.id, msgBin, function (err) {
             if (err) {
-                console.log("Error writing message: " + err.message);
+                return void console.log("Error writing message: " + err.message);
             }
         });
     });
@@ -289,10 +308,11 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
             // Since last 2 checkpoints
             if (!lastKnownHash) {
                 waitFor.abort();
+                console.log(index.cpIndex);
                 // Less than 2 checkpoints in the history: return everything
                 if (index.cpIndex.length < 2) { return void cb(null, 0); }
                 // Otherwise return the second last checkpoint's index
-                return void cb(null, index.cpIndex[0]);
+                return void cb(null, index.cpIndex[0].offset);
                 /* LATER...
                     in practice, two checkpoints can be very close together
                     we have measures to avoid duplicate checkpoints, but editors
@@ -539,12 +559,11 @@ const handleMessage = function (ctx, user, msg) {
                         */
                         if (err) { return w(); }
                         if (!index || !index.metadata) { return void w(); }
+                        // Store the metadata if we don't have it in memory
+                        if (!historyKeeperKeys[channelName]) { historyKeeperKeys[channelName] = index.metadata; }
+                        // And then check if the channel is expired. If it is, send the error and abort
+                        if (checkExpired(ctx, channelName)) { return void waitFor.abort(); }
                         if (!lastKnownHash && index.cpIndex.length > 1) {
-                            // Store the metadata if we don't have it in memory
-                            if (!historyKeeperKeys[channelName]) { historyKeeperKeys[channelName] = index.metadata; }
-                            // And then check if the channel is expired. If it is, send the error and abort
-                            if (checkExpired(ctx, channelName)) { return void waitFor.abort(); }
-
                             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(index.metadata)], w);
                             return;
                         }
