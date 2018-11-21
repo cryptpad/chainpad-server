@@ -308,7 +308,6 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
             // Since last 2 checkpoints
             if (!lastKnownHash) {
                 waitFor.abort();
-                console.log(index.cpIndex);
                 // Less than 2 checkpoints in the history: return everything
                 if (index.cpIndex.length < 2) { return void cb(null, 0); }
                 // Otherwise return the second last checkpoint's index
