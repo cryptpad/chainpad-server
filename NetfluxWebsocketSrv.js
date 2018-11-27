@@ -165,7 +165,7 @@ const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
                 // non-critical, we'll be able to get the channel index later
                 return;
             }
-            if (typeof (index.line) === "number") { index.line++ }
+            if (typeof (index.line) === "number") { index.line++; }
             if (isCp) {
                 index.cpIndex = sliceCpIndex(index.cpIndex, index.line || 0);
                 for (let k in index.offsetByHash) {
@@ -310,10 +310,7 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
             const lkh = index.offsetByHash[lastKnownHash];
             if (lastKnownHash && typeof(lkh) !== "number") {
                 waitFor.abort();
-                return void cb({
-                    code: 'EINVAL',
-                    message: 'Invalid Last Known Hash'
-                });
+                return void cb(new Error('EINVAL'));
             }
 
             // Since last 2 checkpoints
@@ -605,8 +602,8 @@ const handleMessage = function (ctx, user, msg) {
                         if (expired) { return; }
 
                         if (err && err.code !== 'ENOENT') {
-                            console.error("GET_HISTORY", err);
-                            const parsedMsg = {error:err.message, errorCode: err.code, channel: channelName};
+                            if (err.message !== 'EINVAL') { console.error("GET_HISTORY", err); }
+                            const parsedMsg = {error:err.message, channel: channelName};
                             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
                             return;
                         }
