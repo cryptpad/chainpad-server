@@ -305,6 +305,17 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
     nThen((waitFor) => {
         getIndex(ctx, channelName, waitFor((err, index) => {
             if (err) { waitFor.abort(); return void cb(err); }
+
+            // Check last known hash
+            const lkh = index.offsetByHash[lastKnownHash];
+            if (lastKnownHash && typeof(lkh) !== "number") {
+                waitFor.abort();
+                return void cb({
+                    code: 'EINVAL',
+                    message: 'Invalid Last Known Hash'
+                });
+            }
+
             // Since last 2 checkpoints
             if (!lastKnownHash) {
                 waitFor.abort();
@@ -321,8 +332,8 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
                     to ensure that all editors have sufficient knowledge of history
                     to reconcile their differences. */
             }
-            const lkh = index.offsetByHash[lastKnownHash];
-            if (typeof(lkh) === 'number') { offset = lkh; }
+
+            offset = lkh;
         }));
     }).nThen((waitFor) => {
         if (offset !== -1) { return; }
@@ -411,6 +422,12 @@ const historyKeeperBroadcast = function (ctx, channel, msg) {
     let chan = ctx.channels[channel] || (([] /*:any*/) /*:Chan_t*/);
     chan.forEach(function (user) {
         sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(msg)]);
+    });
+};
+const onChannelCleared = function (ctx, channel) {
+    historyKeeperBroadcast(ctx, channel, {
+        error: 'ECLEARED',
+        channel: channel
     });
 };
 // When a channel is removed from datastore, broadcast a message to all its connected users
@@ -589,7 +606,7 @@ const handleMessage = function (ctx, user, msg) {
 
                         if (err && err.code !== 'ENOENT') {
                             console.error("GET_HISTORY", err);
-                            const parsedMsg = {error:err.message, channel: channelName};
+                            const parsedMsg = {error:err.message, errorCode: err.code, channel: channelName};
                             sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify(parsedMsg)]);
                             return;
                         }
@@ -708,8 +725,10 @@ const handleMessage = function (ctx, user, msg) {
                     }
                     var msg = rpc_call[0].slice();
                     if (msg[3] === 'REMOVE_OWNED_CHANNEL') {
-                        var chanId = msg[4];
-                        onChannelDeleted(ctx, chanId);
+                        onChannelDeleted(ctx, msg[4]);
+                    }
+                    if (msg[3] === 'CLEAR_OWNED_CHANNEL') {
+                        onChannelCleared(ctx, msg[4]);
                     }
                     sendMsg(ctx, user, [0, HISTORY_KEEPER_ID, 'MSG', user.id, JSON.stringify([parsed[0]].concat(output))]);
                 });
