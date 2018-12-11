@@ -86,9 +86,12 @@ const tryParse = function (str) {
 const sliceCpIndex = function (cpIndex, line) {
     // Remove "old" checkpoints (cp sent before 100 messages ago)
     const minLine = Math.max(0, (line - 100));
-    return cpIndex.filter(function (obj) {
+    let start = cpIndex.slice(0, -2);
+    const end = cpIndex.slice(-2);
+    start = start.filter(function (obj) {
         return obj.line > minLine;
     });
+    return start.concat(end);
 };
 
 const computeIndex = function (ctx, channelName, cb) {
