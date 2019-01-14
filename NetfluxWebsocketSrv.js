@@ -20,6 +20,8 @@ const HISTORY_KEEPER_ID = Crypto.randomBytes(8).toString('hex');
 
 const USE_HISTORY_KEEPER = true;
 
+// TODO set a constant to use for indicating which channels are ephemeral
+
 let dropUser;
 let historyKeeperKeys = {};
 
@@ -238,6 +240,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
             }
         }
         msgStruct.push(now());
+        // TODO don't store messages if the channel id indicates that it's an ephemeral message
         storeMessage(ctx, channel, JSON.stringify(msgStruct), isCp, getHash(msgStruct[4]));
     }
 };
@@ -469,7 +472,7 @@ const handleMessage = function (ctx, user, msg) {
     user.pingOutstanding = false;
 
     if (cmd === 'JOIN') {
-        if (obj && obj.length !== 32) {
+        if (obj && obj.length !== 32) { // TODO change this to support ephemeral channels (different length ids)
             sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
             return;
         }
