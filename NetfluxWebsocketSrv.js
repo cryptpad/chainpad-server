@@ -160,6 +160,14 @@ const getIndex = (ctx, channelName, cb) => {
     });
 };
 
+
+/*::
+type cp_index_item = {
+    offset: number,
+    line: number
+}
+*/
+
 const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
     const msgBin = new Buffer(msg + '\n', 'utf8');
     nThen((waitFor) => {
@@ -178,10 +186,10 @@ const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
                         delete index.offsetByHash[k];
                     }
                 }
-                index.cpIndex.push({
+                index.cpIndex.push(({
                     offset: index.size,
                     line: ((index.line || 0) + 1)
-                });
+                } /*:cp_index_item*/));
             }
             if (maybeMsgHash) { index.offsetByHash[maybeMsgHash] = index.size; }
             index.size += msgBin.length;
