@@ -78,6 +78,7 @@ const sendMsg = function (ctx, user, msg, cb) {
     }
 };
 
+// TODO add the time when printing errors
 const tryParse = function (str) {
     try {
         return JSON.parse(str);
@@ -336,14 +337,6 @@ const getHistoryOffset = (ctx, channelName, lastKnownHash, cb /*:(e:?Error, os:?
                 if (index.cpIndex.length < 2) { return void cb(null, 0); }
                 // Otherwise return the second last checkpoint's index
                 return void cb(null, index.cpIndex[0].offset);
-                /* LATER...
-                    in practice, two checkpoints can be very close together
-                    we have measures to avoid duplicate checkpoints, but editors
-                    can produce nearby checkpoints which are slightly different,
-                    and slip past these protections. To be really careful, we can
-                    seek past nearby checkpoints by some number of patches so as
-                    to ensure that all editors have sufficient knowledge of history
-                    to reconcile their differences. */
             }
 
             offset = lkh;
@@ -377,11 +370,30 @@ const getHistoryAsync = (ctx, channelName, lastKnownHash, beforeHash, handler, c
             offset = os;
         }));
     }).nThen((waitFor) => {
+        // TODO we have seen this in production
+
+        /*
+            * we passed a last known hash
+              * it was not in memory
+            * so we tried to read the entire file line by line
+            * we never found what we were looking for
+
+
+            * we could have deleted history and had another client try to fetch by lastKnownHash
+              * onlyOffice
+              * contacts
+              * reconnect
+        */
+
         if (offset === -1) { return void cb(new Error("could not find offset")); }
         const start = (beforeHash) ? 0 : offset;
         ctx.store.readMessagesBin(channelName, start, (msgObj, rmcb, abort) => {
             if (beforeHash && msgObj.offset >= offset) { return void abort(); }
-            handler(tryParse(msgObj.buff.toString('utf8')), rmcb);
+            handler(tryParse(msgObj.buff.toString('utf8'), {
+                offset: msgObj.offset,
+                channelName: channelName,
+                
+            }), rmcb); // TODO get more information if this throws an error
         }, waitFor(function (err) {
             return void cb(err);
         }));
