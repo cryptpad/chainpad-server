@@ -171,8 +171,18 @@ type cp_index_item = {
 
 const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
     const msgBin = new Buffer(msg + '\n', 'utf8');
+    // Store the message first, and update the index only once it's stored.
+    // ctx.store.messageBin can be async so updating the index first may
+    // result in a wrong cpIndex
     nThen((waitFor) => {
-        getIndex(ctx, channel.id, waitFor((err, index) => {
+        ctx.store.messageBin(channel.id, msgBin, waitFor(function (err) {
+            if (err) {
+                waitFor.abort();
+                return void console.log("Error writing message: " + err.message);
+            }
+        }));
+    }).nThen(() => {
+        getIndex(ctx, channel.id, (err, index) => {
             if (err) {
                 console.log("getIndex()");
                 console.log(err.stack);
@@ -194,12 +204,6 @@ const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
             }
             if (maybeMsgHash) { index.offsetByHash[maybeMsgHash] = index.size; }
             index.size += msgBin.length;
-        }));
-    }).nThen((waitFor) => {
-        ctx.store.messageBin(channel.id, msgBin, function (err) {
-            if (err) {
-                return void console.log("Error writing message: " + err.message);
-            }
         });
     });
 };
