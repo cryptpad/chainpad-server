@@ -181,8 +181,8 @@ const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
                 return void console.log("Error writing message: " + err.message);
             }
         }));
-    }).nThen(() => {
-        getIndex(ctx, channel.id, (err, index) => {
+    }).nThen((waitFor) => {
+        getIndex(ctx, channel.id, waitFor((err, index) => {
             if (err) {
                 console.log("getIndex()");
                 console.log(err.stack);
@@ -204,7 +204,7 @@ const storeMessage = function (ctx, channel, msg, isCp, maybeMsgHash) {
             }
             if (maybeMsgHash) { index.offsetByHash[maybeMsgHash] = index.size; }
             index.size += msgBin.length;
-        });
+        }));
     });
 };
 
