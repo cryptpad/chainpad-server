@@ -72,15 +72,6 @@ const sendMsg = function (ctx, user, msg, cb) {
     }
 };
 
-const tryParse = function (str) {
-    try {
-        return JSON.parse(str);
-    } catch (err) {
-        console.error(err);
-    }
-};
-
-
 const sendChannelMessage = function (ctx, channel, msgStruct) {
     msgStruct.unshift(0);
     channel.forEach(function (user) {
@@ -175,11 +166,6 @@ const handleMessage = function (ctx, user, msg) {
 
         sendMsg(ctx, user, [seq, 'JACK', chanName]);
 
-        // prevent removal of the channel if there is a pending timeout
-        if (ctx.config.removeChannels && ctx.timeouts[chanName]) {
-            clearTimeout(ctx.timeouts[chanName]);
-        }
-
         chan.id = chanName;
         if (USE_HISTORY_KEEPER) {
             sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
@@ -257,10 +243,7 @@ module.exports.run = function (
         users: {},
         channels: {},
         timeouts: {},
-        //store: storage,
         config: config,
-        //rpc: rpc,
-        //tasks: config.tasks,
         historyKeeper: historyKeeper
     };
 
@@ -276,7 +259,6 @@ module.exports.run = function (
             }
         });
 
-        let locked = false;
         ctx.historyKeeper.checkChannelIntegrity(ctx);
     }, 5000);
     socketServer.on('connection', function(socket) {
