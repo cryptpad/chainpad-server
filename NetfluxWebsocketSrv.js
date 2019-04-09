@@ -37,6 +37,7 @@ const STANDARD_CHANNEL_LENGTH = 32;
 const EPHEMERAL_CHANNEL_LENGTH = 34;
 
 let dropUser;
+let log;
 
 const now = function () { return (new Date()).getTime(); };
 
@@ -51,7 +52,7 @@ const sendMsg = function (ctx, user, msg, cb) {
     if (!socketSendable(user.socket)) { return; }
     try {
         const strMsg = JSON.stringify(msg);
-        if (ctx.config.logToStdout) { console.log('<' + strMsg); }
+        ctx.config.log.silly('RAW_NETFLUX', strMsg);
         user.inQueue += strMsg.length;
         if (cb) { user.sendMsgCallbacks.push(cb); }
         user.socket.send(strMsg, () => {
@@ -62,12 +63,11 @@ const sendMsg = function (ctx, user, msg, cb) {
             try {
                 smcb.forEach((cb)=>{cb();});
             } catch (e) {
-                console.error('Error thrown by sendMsg callback', e);
+                log.error("SEND_MESSAGE_FAIL", e);
             }
         });
     } catch (e) {
-        console.log("sendMsg()");
-        console.log(e.stack);
+        log.error("SEND_MESSAGE_FAIL_2", e.stack);
         dropUser(ctx, user);
     }
 };
@@ -76,10 +76,13 @@ const tryParse = function (str) {
     try {
         return JSON.parse(str);
     } catch (err) {
-        console.error(err);
+        log.error('PARSE_ERROR', {
+            input: str,
+            message: err.message,
+            stack: err.stack,
+        });
     }
 };
-
 
 const sendChannelMessage = function (ctx, channel, msgStruct) {
     msgStruct.unshift(0);
@@ -101,11 +104,11 @@ dropUser = function (ctx, user) {
         try {
             user.socket.close();
         } catch (e) {
-            console.log("Failed to disconnect ["+user.id+"], attempting to terminate");
+            log.error('FAIL_TO_DISCONNECT', user.id);
             try {
                 user.socket.terminate();
             } catch (ee) {
-                console.log("Failed to terminate ["+user.id+"]  *shrug*");
+                log.error('FAIL_TO_TERMINATE', user.id);
             }
         }
     }
@@ -116,14 +119,13 @@ dropUser = function (ctx, user) {
         let idx = chan.indexOf(user);
         if (idx < 0) { return; }
 
-        if (ctx.config.verbose) {
-            console.log("Removing ["+user.id+"] from channel ["+chanName+"]");
-        }
+        log.verbose("REMOVE_FROM_CHANNEL", {
+            user: user.id,
+            channel: chanName,
+        });
         chan.splice(idx, 1);
         if (chan.length === 0) {
-            if (ctx.config.verbose) {
-                console.log("Removing empty channel ["+chanName+"]");
-            }
+            log.verbose('REMOVE_EMPTY_CHANNEL', chanName);
             delete ctx.channels[chanName];
             ctx.historyKeeper.dropChannel(chanName);
         } else {
@@ -253,6 +255,8 @@ module.exports.run = function (
     };
     historyKeeper.setConfig(hkConfig);
 
+    log = config.log;
+
     let ctx = {
         users: {},
         channels: {},
@@ -263,7 +267,6 @@ module.exports.run = function (
         //tasks: config.tasks,
         historyKeeper: historyKeeper
     };
-
 
     setInterval(function () {
         Object.keys(ctx.users).forEach(function (userId) {
@@ -294,12 +297,11 @@ module.exports.run = function (
         ctx.users[user.id] = user;
         sendMsg(ctx, user, [0, '', 'IDENT', user.id]);
         socket.on('message', function(message) {
-            if (ctx.config.logToStdout) { console.log('>'+message); }
+            log.silly('NETFLUX_ON_MESSAGE', message);
             try {
                 handleMessage(ctx, user, message);
             } catch (e) {
-                console.log("handleMessage()");
-                console.log(e.stack);
+                log.error('NETFLUX_BAD_MESSAGE', e.stack);
                 dropUser(ctx, user);
             }
         });
@@ -312,7 +314,10 @@ module.exports.run = function (
         };
         socket.on('close', drop);
         socket.on('error', function (err) {
-            console.error('WebSocket Error: ' + err.message);
+            log.error('NETFLUX_WEBSOCKET_ERROR', {
+                message: err.message,
+                stack: e.stack,
+            });
             drop();
         });
     });
