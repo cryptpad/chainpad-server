@@ -1,6 +1,5 @@
 /*@flow*/
 /* jshint esversion: 6 */
-/* global Buffer, process */
 /*::
 import type { ChainPadServer_Storage_t } from './storage/file.js';
 const flow_WebSocketServer = require('ws').Server;
@@ -26,7 +25,6 @@ type HK_t = {
 */
 ;(function () { 'use strict';
 const Crypto = require('crypto');
-const nThen = require('nthen');
 
 const LAG_MAX_BEFORE_DISCONNECT = 30000;
 const LAG_MAX_BEFORE_PING = 15000;
@@ -69,18 +67,6 @@ const sendMsg = function (ctx, user, msg, cb) {
     } catch (e) {
         log.error("SEND_MESSAGE_FAIL_2", e.stack);
         dropUser(ctx, user);
-    }
-};
-
-const tryParse = function (str) {
-    try {
-        return JSON.parse(str);
-    } catch (err) {
-        log.error('PARSE_ERROR', {
-            input: str,
-            message: err.message,
-            stack: err.stack,
-        });
     }
 };
 
@@ -177,11 +163,6 @@ const handleMessage = function (ctx, user, msg) {
 
         sendMsg(ctx, user, [seq, 'JACK', chanName]);
 
-        // prevent removal of the channel if there is a pending timeout
-        if (ctx.config.removeChannels && ctx.timeouts[chanName]) {
-            clearTimeout(ctx.timeouts[chanName]);
-        }
-
         chan.id = chanName;
         if (USE_HISTORY_KEEPER) {
             sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
@@ -261,10 +242,7 @@ module.exports.run = function (
         users: {},
         channels: {},
         timeouts: {},
-        //store: storage,
         config: config,
-        //rpc: rpc,
-        //tasks: config.tasks,
         historyKeeper: historyKeeper
     };
 
@@ -279,7 +257,6 @@ module.exports.run = function (
             }
         });
 
-        let locked = false;
         ctx.historyKeeper.checkChannelIntegrity(ctx);
     }, 5000);
     socketServer.on('connection', function(socket) {
@@ -316,7 +293,7 @@ module.exports.run = function (
         socket.on('error', function (err) {
             log.error('NETFLUX_WEBSOCKET_ERROR', {
                 message: err.message,
-                stack: e.stack,
+                stack: err.stack,
             });
             drop();
         });
