@@ -261,6 +261,19 @@ module.exports.run = function (
 
         ctx.historyKeeper.checkChannelIntegrity(ctx);
     }, 5000);
+    setInterval(function () {
+        Object.keys(ctx.channels).forEach(function (chanName) {
+            let chan = ctx.channels[chanName];
+            if (!chan) { return; }
+            if (chan.length === 0) {
+                if (ctx.config.verbose) {
+                    console.log("Removing empty channel ["+chanName+"]");
+                }
+                delete ctx.channels[chanName];
+                ctx.historyKeeper.dropChannel(chanName);
+            }
+        });
+    }, 60000);
     socketServer.on('connection', function(socket) {
         if(socket.upgradeReq.url !== (config.websocketPath || '/cryptpad_websocket')) { return; }
         let conn = socket.upgradeReq.connection;
