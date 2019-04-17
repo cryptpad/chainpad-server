@@ -264,9 +264,7 @@ module.exports.run = function (
             let chan = ctx.channels[chanName];
             if (!chan) { return; }
             if (chan.length === 0) {
-                if (ctx.config.verbose) {
-                    console.log("Removing empty channel ["+chanName+"]");
-                }
+                log.debug('REMOVE_EMPTY_CHANNEL_INTERVAL', chanName);
                 delete ctx.channels[chanName];
                 ctx.historyKeeper.dropChannel(chanName);
             }
