@@ -1,13 +1,13 @@
 {
   "name": "chainpad-server",
   "description": "api backend for realtime collaborative visual editor with zero knowlege server",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "dependencies": {
     "nthen": "^0.1.8",
     "pull-stream": "^3.6.9",
     "stream-to-pull-stream": "^1.7.3",
     "tweetnacl": "~0.12.2",
-    "ws": "^1.0.1"
+    "ws": "^3.3.1"
   },
   "devDependencies": {
     "flow-bin": "^0.63.1",

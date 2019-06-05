@@ -270,7 +270,8 @@ module.exports.run = function (
             }
         });
     }, 60000);
-    socketServer.on('connection', function(socket) {
+    socketServer.on('connection', function(socket, req) {
+        if (!socket.upgradeReq) { socket.upgradeReq = req; }
         if(socket.upgradeReq.url !== (config.websocketPath || '/cryptpad_websocket')) { return; }
         let conn = socket.upgradeReq.connection;
         let user = {
