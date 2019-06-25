@@ -239,6 +239,7 @@ module.exports.run = function (
         channels: {},
         timeouts: {},
         config: config,
+        historyKeeper: historyKeeper,
     };
 
     if (historyKeeper) {
@@ -248,7 +249,6 @@ module.exports.run = function (
             STANDARD_CHANNEL_LENGTH: STANDARD_CHANNEL_LENGTH,
         };
         historyKeeper.setConfig(hkConfig);
-        ctx.historyKeeper = historyKeeper;
     } else {
         USE_HISTORY_KEEPER = false;
     }
