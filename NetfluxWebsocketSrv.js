@@ -29,10 +29,10 @@ const Crypto = require('crypto');
 const LAG_MAX_BEFORE_DISCONNECT = 30000;
 const LAG_MAX_BEFORE_PING = 15000;
 
-const USE_HISTORY_KEEPER = true;
-
 const STANDARD_CHANNEL_LENGTH = 32;
 const EPHEMERAL_CHANNEL_LENGTH = 34;
+
+let USE_HISTORY_KEEPER = true;
 
 let dropUser;
 let log;
@@ -113,7 +113,9 @@ dropUser = function (ctx, user) {
         if (chan.length === 0) {
             log.verbose('REMOVE_EMPTY_CHANNEL', chanName);
             delete ctx.channels[chanName];
-            ctx.historyKeeper.dropChannel(chanName);
+            if (USE_HISTORY_KEEPER) {
+                ctx.historyKeeper.dropChannel(chanName);
+            }
         } else {
             sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chanName, 'Quit: [ dropUser() ]']);
         }
@@ -229,12 +231,6 @@ module.exports.run = function (
     config /*:Config_t*/,
     historyKeeper /*:HK_t*/)
 {
-    let hkConfig = {
-        sendMsg: sendMsg,
-        EPHEMERAL_CHANNEL_LENGTH: EPHEMERAL_CHANNEL_LENGTH,
-        STANDARD_CHANNEL_LENGTH: STANDARD_CHANNEL_LENGTH,
-    };
-    historyKeeper.setConfig(hkConfig);
 
     log = config.log;
 
@@ -243,8 +239,19 @@ module.exports.run = function (
         channels: {},
         timeouts: {},
         config: config,
-        historyKeeper: historyKeeper
     };
+
+    if (historyKeeper) {
+        let hkConfig = {
+            sendMsg: sendMsg,
+            EPHEMERAL_CHANNEL_LENGTH: EPHEMERAL_CHANNEL_LENGTH,
+            STANDARD_CHANNEL_LENGTH: STANDARD_CHANNEL_LENGTH,
+        };
+        historyKeeper.setConfig(hkConfig);
+        ctx.historyKeeper = historyKeeper;
+    } else {
+        USE_HISTORY_KEEPER = false;
+    }
 
     setInterval(function () {
         Object.keys(ctx.users).forEach(function (userId) {
@@ -257,7 +264,9 @@ module.exports.run = function (
             }
         });
 
-        ctx.historyKeeper.checkChannelIntegrity(ctx);
+        if (USE_HISTORY_KEEPER) {
+            ctx.historyKeeper.checkChannelIntegrity(ctx);
+        }
     }, 5000);
     setInterval(function () {
         Object.keys(ctx.channels).forEach(function (chanName) {
@@ -266,7 +275,9 @@ module.exports.run = function (
             if (chan.length === 0) {
                 log.debug('REMOVE_EMPTY_CHANNEL_INTERVAL', chanName);
                 delete ctx.channels[chanName];
-                ctx.historyKeeper.dropChannel(chanName);
+                if (USE_HISTORY_KEEPER) {
+                    ctx.historyKeeper.dropChannel(chanName);
+                }
             }
         });
     }, 60000);
