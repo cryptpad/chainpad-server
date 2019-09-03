@@ -122,7 +122,16 @@ dropUser = function (ctx, user) {
     });
 };
 
-
+const handleChannelLeave = function (ctx, channel) {
+    try {
+        if (channel.length === 0) {
+            delete ctx.channels[channel.id];
+            ctx.historyKeeper.dropChannel(channel.id);
+        }
+    } catch (err) {
+        ctx.config.log.error(err);
+    }
+};
 
 const randName = function () { return Crypto.randomBytes(16).toString('hex'); };
 
@@ -212,9 +221,10 @@ const handleMessage = function (ctx, user, msg) {
             err = 'NOT_IN_CHAN';
         } else {
             sendMsg(ctx, user, [seq, 'ACK']);
-            json.unshift(user.id);
+            //json.unshift(user.id);
             sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chan.id]);
             chan.splice(idx, 1);
+            handleChannelLeave(ctx, chan);
             return;
         }
         sendMsg(ctx, user, [seq, 'ERROR', err, obj]);
