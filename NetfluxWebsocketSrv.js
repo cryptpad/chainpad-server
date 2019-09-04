@@ -20,7 +20,6 @@ type HK_t = {
     dropChannel: (any)=>void,
     checkExpired: (...any)=>boolean,
     onDirectMessage: (...any)=>void,
-    checkChannelIntegrity: (any)=>void,
 }
 */
 ;(function () { 'use strict';
@@ -273,10 +272,6 @@ module.exports.run = function (
                 u.pingOutstanding = true;
             }
         });
-
-        if (USE_HISTORY_KEEPER) {
-            ctx.historyKeeper.checkChannelIntegrity(ctx);
-        }
     }, 5000);
     setInterval(function () {
         Object.keys(ctx.channels).forEach(function (chanName) {
