@@ -288,10 +288,6 @@ module.exports.run = function (
     }, 60000);
     socketServer.on('connection', function(socket, req) {
         if (!socket.upgradeReq) { socket.upgradeReq = req; }
-        if(socket.upgradeReq.url !== (config.websocketPath || '/cryptpad_websocket')) {
-            log.silly('NETFLUX_DROPPING_WRONG_PATH', { expectedPath: config.websocketPath, actualPath: socket.upgradeReq.url });
-            return;
-        }
         let conn = socket.upgradeReq.connection;
         let user = {
             addr: conn.remoteAddress + '|' + conn.remotePort,
