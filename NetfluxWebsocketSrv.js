@@ -63,10 +63,13 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
     }
 };
 
+const WEBSOCKET_CLOSING = 2;
+const WEBSOCKET_CLOSED = 3;
+
 const dropUser = function (ctx, user) {
     var log = ctx.log;
-    if (user.socket.readyState !== 2 /* WebSocket.CLOSING */
-        && user.socket.readyState !== 3 /* WebSocket.CLOSED */)
+    if (user.socket.readyState !== WEBSOCKET_CLOSING
+        && user.socket.readyState !== WEBSOCKET_CLOSED)
     {
         try {
             user.socket.close();
@@ -202,7 +205,6 @@ const handleLeave = function (ctx, args) {
         err = 'NOT_IN_CHAN';
     } else {
         sendMsg(ctx, user, [seq, 'ACK']);
-        //json.unshift(user.id);
         sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chan.id]);
         chan.splice(idx, 1);
         handleChannelLeave(ctx, chan);
@@ -327,7 +329,7 @@ module.exports.run = function (socketServer, config, historyKeeper) {
                 ctx.dropUser(user);
             }
         });
-        var drop = function (/*evt*/) {
+        var drop = function () {
             for (let userId in ctx.users) {
                 if (ctx.users[userId].socket === socket) {
                     ctx.dropUser(ctx.users[userId]);
