@@ -1,28 +1,4 @@
-/*@flow*/
 /* jshint esversion: 6 */
-/*::
-import type { ChainPadServer_Storage_t } from './storage/file.js';
-const flow_WebSocketServer = require('ws').Server;
-type WebSocketServer_t = typeof(flow_WebSocketServer);
-const flow_Config = require('./config.example.js');
-type Config_t = typeof(flow_Config);
-type Chan_t = {
-    indexOf: (any)=>number,
-    id: string,
-    lastSavedCp: string,
-    forEach: ((any)=>void)=>void,
-    push: (any)=>void,
-};
-type HK_t = {
-    id: string,
-    setConfig: (Object)=>void,
-    onChannelMessage: (...any)=>void,
-    dropChannel: (any)=>void,
-    checkExpired: (...any)=>boolean,
-    onDirectMessage: (...any)=>void,
-}
-*/
-;(function () { 'use strict';
 const Crypto = require('crypto');
 
 const LAG_MAX_BEFORE_DISCONNECT = 30000;
@@ -31,10 +7,14 @@ const LAG_MAX_BEFORE_PING = 15000;
 const STANDARD_CHANNEL_LENGTH = 32;
 const EPHEMERAL_CHANNEL_LENGTH = 34;
 
-let USE_HISTORY_KEEPER = true;
+const VALID_CHANNEL_LENGTHS = [
+    STANDARD_CHANNEL_LENGTH,
+    EPHEMERAL_CHANNEL_LENGTH
+];
 
-let dropUser;
-let log;
+const isValidChannelLength = function (channelId) {
+    return VALID_CHANNEL_LENGTHS.indexOf(channelId.length) !== -1;
+};
 
 const now = function () { return (new Date()).getTime(); };
 
@@ -47,9 +27,10 @@ const QUEUE_CHR = 1024 * 1024 * 4;
 
 const sendMsg = function (ctx, user, msg, cb) {
     if (!socketSendable(user.socket)) { return; }
+    let log = ctx.log;
     try {
         const strMsg = JSON.stringify(msg);
-        ctx.config.log.silly('RAW_NETFLUX', strMsg);
+        log.silly('RAW_NETFLUX', strMsg);
         user.inQueue += strMsg.length;
         if (cb) { user.sendMsgCallbacks.push(cb); }
         user.socket.send(strMsg, () => {
@@ -65,7 +46,7 @@ const sendMsg = function (ctx, user, msg, cb) {
         });
     } catch (e) {
         log.error("SEND_MESSAGE_FAIL_2", e.stack);
-        dropUser(ctx, user);
+        ctx.dropUser(user);
     }
 };
 
@@ -77,12 +58,13 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
             sendMsg(ctx, user, msgStruct);
         }
     });
-    if (USE_HISTORY_KEEPER && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
+    if (ctx.USE_HISTORY_KEEPER && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
         ctx.historyKeeper.onChannelMessage(ctx, channel, msgStruct);
     }
 };
 
-dropUser = function (ctx, user) {
+const dropUser = function (ctx, user) {
+    var log = ctx.log;
     if (user.socket.readyState !== 2 /* WebSocket.CLOSING */
         && user.socket.readyState !== 3 /* WebSocket.CLOSED */)
     {
@@ -112,7 +94,7 @@ dropUser = function (ctx, user) {
         if (chan.length === 0) {
             log.verbose('REMOVE_EMPTY_CHANNEL', chanName);
             delete ctx.channels[chanName];
-            if (USE_HISTORY_KEEPER) {
+            if (ctx.USE_HISTORY_KEEPER) {
                 ctx.historyKeeper.dropChannel(chanName);
             }
         } else {
@@ -122,126 +104,174 @@ dropUser = function (ctx, user) {
 };
 
 const handleChannelLeave = function (ctx, channel) {
+    var log = ctx.log;
     try {
         if (channel.length === 0) {
             delete ctx.channels[channel.id];
             ctx.historyKeeper.dropChannel(channel.id);
         }
     } catch (err) {
-        ctx.config.log.error(err);
+        log.error(err);
     }
 };
 
 const randName = function () { return Crypto.randomBytes(16).toString('hex'); };
 
+const handleJoin = function (ctx, args) {
+    let obj = args.obj;
+    let user = args.user;
+    let seq = args.seq;
+
+    if (obj && !isValidChannelLength(obj)) {
+        return void sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
+    }
+    let chanName = obj || randName();
+    let chan = ctx.channels[chanName] = ctx.channels[chanName] || (([] /*:any*/) /*:Chan_t*/);
+
+    if (chan.indexOf(user) !== -1) {
+        // If the user is already in the channel, don't add it again.
+        // Send an EJOINED, and send the userlist.
+        // Don't broadcast the JOIN to the channel because other members
+        // already know this user is in the channel.
+        sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
+
+        if (ctx.USE_HISTORY_KEEPER) {
+            sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
+        }
+
+        chan.forEach(function (u) {
+            if (u === user) { return; }
+            sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
+        });
+        return void sendMsg(ctx, user, [0, user.id, 'JOIN', chanName]);
+    }
+
+    sendMsg(ctx, user, [seq, 'JACK', chanName]);
+
+    chan.id = chanName;
+    if (ctx.USE_HISTORY_KEEPER) {
+        sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
+    }
+    chan.forEach(function (u) { sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]); });
+    chan.push(user);
+    sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
+};
+
+const handleMsg = function (ctx, args) {
+    let obj = args.obj;
+    let seq = args.seq;
+    let user = args.user;
+    let json = args.json;
+
+    if (ctx.USE_HISTORY_KEEPER) {
+        ctx.historyKeeper.checkExpired(ctx, obj);
+        if (obj === ctx.historyKeeper.id) {
+            return void ctx.historyKeeper.onDirectMessage(ctx, seq, user, json);
+        }
+    }
+
+    if (obj && !ctx.channels[obj] && !ctx.users[obj]) {
+        return void sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
+    }
+    sendMsg(ctx, user, [seq, 'ACK']);
+    let target;
+    json.unshift(user.id);
+    if ((target = ctx.channels[obj])) {
+        return void sendChannelMessage(ctx, target, json);
+    }
+    if ((target = ctx.users[obj])) {
+        json.unshift(0);
+        return void sendMsg(ctx, target, json);
+    }
+};
+
+const handleLeave = function (ctx, args) {
+    let obj = args.obj;
+    let user = args.user;
+    let seq = args.seq;
+
+    let err;
+    let chan;
+    let idx;
+    if (!obj) {
+        err = 'EINVAL';
+        obj = 'undefined';
+    } else if (!(chan = ctx.channels[obj])) {
+        err = 'ENOENT';
+    } else if ((idx = chan.indexOf(user)) === -1) {
+        err = 'NOT_IN_CHAN';
+    } else {
+        sendMsg(ctx, user, [seq, 'ACK']);
+        //json.unshift(user.id);
+        sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chan.id]);
+        chan.splice(idx, 1);
+        handleChannelLeave(ctx, chan);
+        return;
+    }
+    sendMsg(ctx, user, [seq, 'ERROR', err, obj]);
+};
+
+const handlePing = function (ctx, args) {
+    sendMsg(ctx, args.user, [args.seq, 'ACK']);
+};
+
+const commands = {
+    JOIN: handleJoin,
+    MSG: handleMsg,
+    LEAVE: handleLeave,
+    PING: handlePing,
+};
 
 const handleMessage = function (ctx, user, msg) {
+    // this parse is safe because handleMessage
+    // is only ever called in a try-catch
     let json = JSON.parse(msg);
     let seq = json.shift();
     let cmd = json[0];
-    let obj = json[1];
 
     user.timeOfLastMessage = now();
     user.pingOutstanding = false;
 
-    if (cmd === 'JOIN') {
-        if (obj && [STANDARD_CHANNEL_LENGTH, EPHEMERAL_CHANNEL_LENGTH].indexOf(obj.length) === -1) {
-            sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
-            return;
-        }
-        let chanName = obj || randName();
-        let chan = ctx.channels[chanName] = ctx.channels[chanName] || (([] /*:any*/) /*:Chan_t*/);
-
-        if (chan.indexOf(user) !== -1) {
-            // If the user is already in the channel, don't add it again.
-            // Send an EJOINED, and send the userlist.
-            // Don't broadcast the JOIN to the channel because other members
-            // already know this user is in the channel.
-            sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
-
-            if (USE_HISTORY_KEEPER) {
-                sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
-            }
-
-            chan.forEach(function (u) {
-                if (u === user) { return; }
-                sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
-            });
-            sendMsg(ctx, user, [0, user.id, 'JOIN', chanName]);
-            return;
-        }
-
-        sendMsg(ctx, user, [seq, 'JACK', chanName]);
-
-        chan.id = chanName;
-        if (USE_HISTORY_KEEPER) {
-            sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
-        }
-        chan.forEach(function (u) { sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]); });
-        chan.push(user);
-        sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
-        return;
-    }
-
-    if (cmd === 'MSG') {
-        if (USE_HISTORY_KEEPER) { ctx.historyKeeper.checkExpired(ctx, obj); }
-
-        if (USE_HISTORY_KEEPER && obj === ctx.historyKeeper.id) {
-            ctx.historyKeeper.onDirectMessage(ctx, seq, user, json);
-            return;
-        }
-        if (obj && !ctx.channels[obj] && !ctx.users[obj]) {
-            sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
-            return;
-        }
-        sendMsg(ctx, user, [seq, 'ACK']);
-        let target;
-        json.unshift(user.id);
-        if ((target = ctx.channels[obj])) {
-            sendChannelMessage(ctx, target, json);
-            return;
-        }
-        if ((target = ctx.users[obj])) {
-            json.unshift(0);
-            sendMsg(ctx, target, json);
-            return;
-        }
-    }
-    if (cmd === 'LEAVE') {
-        let err;
-        let chan;
-        let idx;
-        if (!obj) {
-            err = 'EINVAL';
-            obj = 'undefined';
-        } else if (!(chan = ctx.channels[obj])) {
-            err = 'ENOENT';
-        } else if ((idx = chan.indexOf(user)) === -1) {
-            err = 'NOT_IN_CHAN';
-        } else {
-            sendMsg(ctx, user, [seq, 'ACK']);
-            //json.unshift(user.id);
-            sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chan.id]);
-            chan.splice(idx, 1);
-            handleChannelLeave(ctx, chan);
-            return;
-        }
-        sendMsg(ctx, user, [seq, 'ERROR', err, obj]);
-        return;
-    }
-    if (cmd === 'PING') {
-        sendMsg(ctx, user, [seq, 'ACK']);
-        return;
-    }
+    if (typeof(commands[cmd]) !== 'function') { return; }
+    commands[cmd](ctx, {
+        user: user,
+        json: json,
+        seq: seq,
+        obj: json[1],
+    });
 };
 
-module.exports.run = function (
-    socketServer /*:WebSocketServer_t*/,
-    config /*:Config_t*/,
-    historyKeeper /*:HK_t*/)
-{
+const checkUserActivity = function (ctx) {
+    var time = now();
+    Object.keys(ctx.users).forEach(function (userId) {
+        let u = ctx.users[userId];
+        if (time - u.timeOfLastMessage > LAG_MAX_BEFORE_DISCONNECT) {
+            ctx.dropUser(u);
+        }
+        if (!u.pingOutstanding && time - u.timeOfLastMessage > LAG_MAX_BEFORE_PING) {
+            sendMsg(ctx, u, [0, '', 'PING', now()]);
+            u.pingOutstanding = true;
+        }
+    });
+};
 
-    log = config.log;
+const dropEmptyChannels = function (ctx) {
+    var log = ctx.log;
+    Object.keys(ctx.channels).forEach(function (chanName) {
+        let chan = ctx.channels[chanName];
+        if (!chan) { return; }
+        if (chan.length === 0) {
+            log.debug('REMOVE_EMPTY_CHANNEL_INTERVAL', chanName);
+            delete ctx.channels[chanName];
+            if (ctx.USE_HISTORY_KEEPER) {
+                ctx.historyKeeper.dropChannel(chanName);
+            }
+        }
+    });
+};
+
+module.exports.run = function (socketServer, config, historyKeeper) {
+    var log = config.log;
 
     let ctx = {
         users: {},
@@ -249,6 +279,12 @@ module.exports.run = function (
         timeouts: {},
         config: config,
         historyKeeper: historyKeeper,
+        log: config.log,
+        USE_HISTORY_KEEPER: true,
+    };
+
+    ctx.dropUser = function (user) {
+        dropUser(ctx, user);
     };
 
     if (historyKeeper) {
@@ -259,32 +295,14 @@ module.exports.run = function (
         };
         historyKeeper.setConfig(hkConfig);
     } else {
-        USE_HISTORY_KEEPER = false;
+        ctx.USE_HISTORY_KEEPER = false;
     }
 
-    setInterval(function () {
-        Object.keys(ctx.users).forEach(function (userId) {
-            let u = ctx.users[userId];
-            if (now() - u.timeOfLastMessage > LAG_MAX_BEFORE_DISCONNECT) {
-                dropUser(ctx, u);
-            } else if (!u.pingOutstanding && now() - u.timeOfLastMessage > LAG_MAX_BEFORE_PING) {
-                sendMsg(ctx, u, [0, '', 'PING', now()]);
-                u.pingOutstanding = true;
-            }
-        });
+    ctx.userActivityInterval = setInterval(function () {
+        checkUserActivity(ctx);
     }, 5000);
-    setInterval(function () {
-        Object.keys(ctx.channels).forEach(function (chanName) {
-            let chan = ctx.channels[chanName];
-            if (!chan) { return; }
-            if (chan.length === 0) {
-                log.debug('REMOVE_EMPTY_CHANNEL_INTERVAL', chanName);
-                delete ctx.channels[chanName];
-                if (USE_HISTORY_KEEPER) {
-                    ctx.historyKeeper.dropChannel(chanName);
-                }
-            }
-        });
+    ctx.channelActivityInterval = setInterval(function () {
+        dropEmptyChannels(ctx);
     }, 60000);
     socketServer.on('connection', function(socket, req) {
         if (!socket.upgradeReq) { socket.upgradeReq = req; }
@@ -306,13 +324,13 @@ module.exports.run = function (
                 handleMessage(ctx, user, message);
             } catch (e) {
                 log.error('NETFLUX_BAD_MESSAGE', e.stack);
-                dropUser(ctx, user);
+                ctx.dropUser(user);
             }
         });
         var drop = function (/*evt*/) {
             for (let userId in ctx.users) {
                 if (ctx.users[userId].socket === socket) {
-                    dropUser(ctx, ctx.users[userId]);
+                    ctx.dropUser(ctx.users[userId]);
                 }
             }
         };
@@ -326,4 +344,3 @@ module.exports.run = function (
         });
     });
 };
-}());
