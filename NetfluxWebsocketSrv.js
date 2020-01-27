@@ -4,18 +4,6 @@ const Crypto = require('crypto');
 const LAG_MAX_BEFORE_DISCONNECT = 30000;
 const LAG_MAX_BEFORE_PING = 15000;
 
-const STANDARD_CHANNEL_LENGTH = 32;
-const EPHEMERAL_CHANNEL_LENGTH = 34;
-
-const VALID_CHANNEL_LENGTHS = [
-    STANDARD_CHANNEL_LENGTH,
-    EPHEMERAL_CHANNEL_LENGTH
-];
-
-const isValidChannelLength = function (channelId) {
-    return VALID_CHANNEL_LENGTHS.indexOf(channelId.length) !== -1;
-};
-
 const now = function () { return (new Date()).getTime(); };
 
 const socketSendable = function (socket) {
@@ -58,7 +46,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
             sendMsg(ctx, user, msgStruct);
         }
     });
-    if (ctx.USE_HISTORY_KEEPER && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
+    if (ctx.historyKeeper && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
         ctx.historyKeeper.onChannelMessage(ctx, channel, msgStruct);
     }
 };
@@ -97,7 +85,7 @@ const dropUser = function (ctx, user) {
         if (chan.length === 0) {
             log.verbose('REMOVE_EMPTY_CHANNEL', chanName);
             delete ctx.channels[chanName];
-            if (ctx.USE_HISTORY_KEEPER) {
+            if (ctx.historyKeeper) {
                 ctx.historyKeeper.dropChannel(chanName);
             }
         } else {
@@ -125,9 +113,6 @@ const handleJoin = function (ctx, args) {
     let user = args.user;
     let seq = args.seq;
 
-    if (obj && !isValidChannelLength(obj)) {
-        return void sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
-    }
     let chanName = obj || randName();
     let chan = ctx.channels[chanName] = ctx.channels[chanName] || (([] /*:any*/) /*:Chan_t*/);
 
@@ -138,7 +123,10 @@ const handleJoin = function (ctx, args) {
         // already know this user is in the channel.
         sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
 
-        if (ctx.USE_HISTORY_KEEPER) {
+        if (ctx.historyKeeper) {
+            // XXX magic historyKeeper-specific behaviour
+            // historyKeeper needs to be in every channel already when a user joins
+            // there are probably better ways to do this
             sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
         }
 
@@ -152,7 +140,7 @@ const handleJoin = function (ctx, args) {
     sendMsg(ctx, user, [seq, 'JACK', chanName]);
 
     chan.id = chanName;
-    if (ctx.USE_HISTORY_KEEPER) {
+    if (ctx.historyKeeper) {
         sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
     }
     chan.forEach(function (u) { sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]); });
@@ -166,7 +154,12 @@ const handleMsg = function (ctx, args) {
     let user = args.user;
     let json = args.json;
 
-    if (ctx.USE_HISTORY_KEEPER) {
+    if (ctx.historyKeeper) {
+        // XXX it seems like we can just let historyKeeper handle this
+        // in sendChannelMessage
+        // it's not a big deal if somebody receives a message for an expired channel
+        // before historyKeeper has a chance to kick everyone
+        // the main thing is that new messages aren't stored
         ctx.historyKeeper.checkExpired(ctx, obj);
         if (obj === ctx.historyKeeper.id) {
             return void ctx.historyKeeper.onDirectMessage(ctx, seq, user, json);
@@ -265,7 +258,7 @@ const dropEmptyChannels = function (ctx) {
         if (chan.length === 0) {
             log.debug('REMOVE_EMPTY_CHANNEL_INTERVAL', chanName);
             delete ctx.channels[chanName];
-            if (ctx.USE_HISTORY_KEEPER) {
+            if (ctx.historyKeeper) {
                 ctx.historyKeeper.dropChannel(chanName);
             }
         }
@@ -282,23 +275,11 @@ module.exports.run = function (socketServer, config, historyKeeper) {
         config: config,
         historyKeeper: historyKeeper,
         log: config.log,
-        USE_HISTORY_KEEPER: true,
     };
 
     ctx.dropUser = function (user) {
         dropUser(ctx, user);
     };
-
-    if (historyKeeper) {
-        let hkConfig = {
-            sendMsg: sendMsg,
-            EPHEMERAL_CHANNEL_LENGTH: EPHEMERAL_CHANNEL_LENGTH,
-            STANDARD_CHANNEL_LENGTH: STANDARD_CHANNEL_LENGTH,
-        };
-        historyKeeper.setConfig(hkConfig);
-    } else {
-        ctx.USE_HISTORY_KEEPER = false;
-    }
 
     ctx.userActivityInterval = setInterval(function () {
         checkUserActivity(ctx);
