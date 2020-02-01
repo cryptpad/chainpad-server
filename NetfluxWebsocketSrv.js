@@ -275,6 +275,7 @@ module.exports.run = function (socketServer, config, historyKeeper) {
         config: config,
         historyKeeper: historyKeeper,
         log: config.log,
+        sendMsg: sendMsg,
     };
 
     ctx.dropUser = function (user) {
