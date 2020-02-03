@@ -15,10 +15,8 @@ const QUEUE_CHR = 1024 * 1024 * 4;
 
 const sendMsg = function (ctx, user, msg, cb) {
     if (!socketSendable(user.socket)) { return; }
-    let log = ctx.log;
     try {
         const strMsg = JSON.stringify(msg);
-        log.silly('RAW_NETFLUX', strMsg);
         user.inQueue += strMsg.length;
         if (cb) { user.sendMsgCallbacks.push(cb); }
         user.socket.send(strMsg, () => {
@@ -29,44 +27,49 @@ const sendMsg = function (ctx, user, msg, cb) {
             try {
                 smcb.forEach((cb)=>{cb();});
             } catch (e) {
-                log.error("SEND_MESSAGE_FAIL", e);
+                ctx.emit.error(e, 'SEND_MESSAGE_FAIL');
             }
         });
     } catch (e) {
-        log.error("SEND_MESSAGE_FAIL_2", e.stack);
-        ctx.dropUser(user);
+        ctx.emit.error(e, 'SEND_MESSAGE_FAIL_2');
+        ctx.dropUser(user, 'SEND_MESSAGE_FAIL_2');
     }
 };
 
 const sendChannelMessage = function (ctx, channel, msgStruct) {
-    msgStruct.unshift(0);
+    // we always put a 0 at the beginning of the array for a channel message
+    // the on-wire implementation isn't a part of the netflux spec
+    // though it seems like it ought to be if we want interoperability between
+    // different server and client implementations
+    msgStruct.unshift(0); // TODO document this
+
     channel.forEach(function (user) {
         // We don't want to send back a message to its sender, in order to save bandwidth
-        if (msgStruct[2] !== 'MSG' || user.id !== msgStruct[1]) {
+        if (msgStruct[2] !== 'MSG' || user.id === msgStruct[1]) {
             sendMsg(ctx, user, msgStruct);
         }
     });
-    if (ctx.historyKeeper && msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
-        ctx.historyKeeper.onChannelMessage(ctx, channel, msgStruct);
+
+    if (msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
+        ctx.emit.channelMessage(ctx, channel, msgStruct);
     }
 };
 
 const WEBSOCKET_CLOSING = 2;
 const WEBSOCKET_CLOSED = 3;
 
-const dropUser = function (ctx, user) {
-    var log = ctx.log;
+const dropUser = function (ctx, user, reason) {
     if (user.socket.readyState !== WEBSOCKET_CLOSING
         && user.socket.readyState !== WEBSOCKET_CLOSED)
     {
         try {
             user.socket.close();
         } catch (e) {
-            log.error('FAIL_TO_DISCONNECT', user.id);
+            ctx.emit.error(e, 'FAIL_TO_DISCONNECT', { id: user.id, });
             try {
                 user.socket.terminate();
             } catch (ee) {
-                log.error('FAIL_TO_TERMINATE', user.id);
+                ctx.emit.error(ee, 'FAIL_TO_TERMINATE', { id: user.id, });
             }
         }
     }
@@ -77,32 +80,25 @@ const dropUser = function (ctx, user) {
         let idx = chan.indexOf(user);
         if (idx < 0) { return; }
 
-        log.verbose("REMOVE_FROM_CHANNEL", {
-            user: user.id,
-            channel: chanName,
-        });
         chan.splice(idx, 1);
         if (chan.length === 0) {
-            log.verbose('REMOVE_EMPTY_CHANNEL', chanName);
             delete ctx.channels[chanName];
-            if (ctx.historyKeeper) {
-                ctx.historyKeeper.dropChannel(chanName);
-            }
+            ctx.emit.channelClose(chanName, 'REMOVE_EMPTY_CHANNEL');
         } else {
             sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chanName, 'Quit: [ dropUser() ]']);
         }
     });
+    ctx.emit.sessionClose(user.id, reason);
 };
 
 const handleChannelLeave = function (ctx, channel) {
-    var log = ctx.log;
     try {
         if (channel.length === 0) {
             delete ctx.channels[channel.id];
-            ctx.historyKeeper.dropChannel(channel.id);
+            ctx.emit.channelClose(channel.id);
         }
     } catch (err) {
-        log.error(err);
+        ctx.emit.error(err, 'HANDLE_CHANNEL_LEAVE');
     }
 };
 
@@ -122,14 +118,7 @@ const handleJoin = function (ctx, args) {
         // Don't broadcast the JOIN to the channel because other members
         // already know this user is in the channel.
         sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
-
-        if (ctx.historyKeeper) {
-            // XXX magic historyKeeper-specific behaviour
-            // historyKeeper needs to be in every channel already when a user joins
-            // there are probably better ways to do this
-            sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
-        }
-
+        ctx.emit.channelOpen(ctx, chanName, user);
         chan.forEach(function (u) {
             if (u === user) { return; }
             sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
@@ -140,9 +129,7 @@ const handleJoin = function (ctx, args) {
     sendMsg(ctx, user, [seq, 'JACK', chanName]);
 
     chan.id = chanName;
-    if (ctx.historyKeeper) {
-        sendMsg(ctx, user, [0, ctx.historyKeeper.id, 'JOIN', chanName]);
-    }
+    ctx.emit.channelOpen(ctx, chanName, user);
     chan.forEach(function (u) { sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]); });
     chan.push(user);
     sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
@@ -154,16 +141,8 @@ const handleMsg = function (ctx, args) {
     let user = args.user;
     let json = args.json;
 
-    if (ctx.historyKeeper) {
-        // XXX it seems like we can just let historyKeeper handle this
-        // in sendChannelMessage
-        // it's not a big deal if somebody receives a message for an expired channel
-        // before historyKeeper has a chance to kick everyone
-        // the main thing is that new messages aren't stored
-        ctx.historyKeeper.checkExpired(ctx, obj);
-        if (obj === ctx.historyKeeper.id) {
-            return void ctx.historyKeeper.onDirectMessage(ctx, seq, user, json);
-        }
+    if (typeof(ctx.registered[obj]) === 'function') {
+        return void ctx.registered[obj](ctx, seq, user, json);
     }
 
     if (obj && !ctx.channels[obj] && !ctx.users[obj]) {
@@ -241,7 +220,7 @@ const checkUserActivity = function (ctx) {
     Object.keys(ctx.users).forEach(function (userId) {
         let u = ctx.users[userId];
         if (time - u.timeOfLastMessage > LAG_MAX_BEFORE_DISCONNECT) {
-            ctx.dropUser(u);
+            ctx.dropUser(u, "INACTIVITY");
         }
         if (!u.pingOutstanding && time - u.timeOfLastMessage > LAG_MAX_BEFORE_PING) {
             sendMsg(ctx, u, [0, '', 'PING', now()]);
@@ -251,35 +230,86 @@ const checkUserActivity = function (ctx) {
 };
 
 const dropEmptyChannels = function (ctx) {
-    var log = ctx.log;
     Object.keys(ctx.channels).forEach(function (chanName) {
         let chan = ctx.channels[chanName];
         if (!chan) { return; }
         if (chan.length === 0) {
-            log.debug('REMOVE_EMPTY_CHANNEL_INTERVAL', chanName);
             delete ctx.channels[chanName];
-            if (ctx.historyKeeper) {
-                ctx.historyKeeper.dropChannel(chanName);
-            }
+            ctx.emit.channelClose(chanName, 'REMOVE_EMPTY_CHANNEL_INTERVAL');
         }
     });
 };
 
-module.exports.run = function (socketServer, config, historyKeeper) {
-    var log = config.log;
+module.exports.create = function (socketServer) {
+    const Server = {};
+    const emit = {};
+    const handlers = {};
+
+    [
+        'channelMessage', // (ctx, channelName, msgStruct)
+        'channelClose',   // (channelName, reason)
+        'channelOpen',    // (ctx, channelName, user)
+        'sessionClose',   // (userId, reason)
+        'error',          // (err, label, info)
+    ].forEach(function (key) {
+        const stack = handlers[key] = [];
+        emit[key] = function () {
+            var l = stack.length;
+            for (var i = 0; i < l; i++) {
+                stack[i].apply(null, arguments);
+            }
+            return Server;
+        };
+    });
+
+    Server.on = function (key, handler) {
+        if (!Array.isArray(handlers[key])) {
+            return void console.error(new Error("Unsupported event type"));
+        }
+        if (typeof(handler) !== 'function') {
+            return void console.error(new Error("no function supplied"));
+        }
+        handlers[key].push(handler);
+        return Server;
+    };
+
+    Server.off = function (key, handler) {
+        if (!Array.isArray(handlers[key])) {
+            return void console.error(new Error("Unsupported event type"));
+        }
+        if (typeof(handler) !== 'function') {
+            return void console.error(new Error("no function supplied"));
+        }
+        var index = handlers[key].indexOf(handler);
+
+        if (index < 0) { return; }
+        handlers[key].splice(index, 1);
+    };
+
+    const registered = {};
+
+    // register a special id to receive direct messages
+    Server.register = function (id, f) { // (ctx, seq, user, json)
+        registered[id] = f;
+        return Server;
+    };
+
+    Server.unregister = function (id) {
+        delete registered[id];
+        return Server;
+    };
 
     let ctx = {
         users: {},
         channels: {},
         timeouts: {},
-        config: config,
-        historyKeeper: historyKeeper,
-        log: config.log,
         sendMsg: sendMsg,
+        emit: emit,
+        registered: registered,
     };
 
-    ctx.dropUser = function (user) {
-        dropUser(ctx, user);
+    ctx.dropUser = function (user, reason) {
+        dropUser(ctx, user, reason);
     };
 
     ctx.userActivityInterval = setInterval(function () {
@@ -288,13 +318,21 @@ module.exports.run = function (socketServer, config, historyKeeper) {
     ctx.channelActivityInterval = setInterval(function () {
         dropEmptyChannels(ctx);
     }, 60000);
+
+
+    var createUniqueName = function () {
+        var name = randName();
+        if (typeof(ctx.users[name]) === 'undefined') { return name; }
+        return createUniqueName();
+    };
+
     socketServer.on('connection', function(socket, req) {
         if (!socket.upgradeReq) { socket.upgradeReq = req; }
         let conn = socket.upgradeReq.connection;
         let user = {
             addr: conn.remoteAddress + '|' + conn.remotePort,
             socket: socket,
-            id: randName(),
+            id: createUniqueName(),
             timeOfLastMessage: now(),
             pingOutstanding: false,
             inQueue: 0,
@@ -303,28 +341,25 @@ module.exports.run = function (socketServer, config, historyKeeper) {
         ctx.users[user.id] = user;
         sendMsg(ctx, user, [0, '', 'IDENT', user.id]);
         socket.on('message', function(message) {
-            log.silly('NETFLUX_ON_MESSAGE', message);
             try {
                 handleMessage(ctx, user, message);
             } catch (e) {
-                log.error('NETFLUX_BAD_MESSAGE', e.stack);
-                ctx.dropUser(user);
+                emit.error(e, 'NETFLUX_BAD_MESSAGE', {
+                    user: user.id,
+                    message: message,
+                });
+                ctx.dropUser(user, 'BAD_MESSAGE');
             }
         });
         var drop = function () {
-            for (let userId in ctx.users) {
-                if (ctx.users[userId].socket === socket) {
-                    ctx.dropUser(ctx.users[userId]);
-                }
-            }
+            ctx.dropUser(ctx.users[used.id]);
         };
         socket.on('close', drop);
         socket.on('error', function (err) {
-            log.error('NETFLUX_WEBSOCKET_ERROR', {
-                message: err.message,
-                stack: err.stack,
-            });
+            emit.error(err, 'NETFLUX_WEBSOCKET_ERROR');
             drop();
         });
     });
+
+    return Server;
 };
