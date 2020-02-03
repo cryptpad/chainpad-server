@@ -110,7 +110,7 @@ const handleJoin = function (ctx, args) {
     let seq = args.seq;
 
     let chanName = obj || randName();
-    let chan = ctx.channels[chanName] = ctx.channels[chanName] || (([] /*:any*/) /*:Chan_t*/);
+    let chan = ctx.channels[chanName] = ctx.channels[chanName] || [];
 
     if (chan.indexOf(user) !== -1) {
         // If the user is already in the channel, don't add it again.
@@ -352,7 +352,7 @@ module.exports.create = function (socketServer) {
             }
         });
         var drop = function () {
-            ctx.dropUser(ctx.users[used.id]);
+            ctx.dropUser(ctx.users[user.id]);
         };
         socket.on('close', drop);
         socket.on('error', function (err) {
