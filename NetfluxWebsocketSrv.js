@@ -14,6 +14,7 @@ const socketSendable = function (socket) {
 const QUEUE_CHR = 1024 * 1024 * 4;
 
 const sendMsg = function (ctx, user, msg, cb) {
+    if (!user) { return; }
     if (!socketSendable(user.socket)) { return; }
     try {
         const strMsg = JSON.stringify(msg);
@@ -51,7 +52,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
     });
 
     if (msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
-        ctx.emit.channelMessage(ctx, channel, msgStruct);
+        ctx.emit.channelMessage(ctx.Server, channel, msgStruct);
     }
 };
 
@@ -118,7 +119,7 @@ const handleJoin = function (ctx, args) {
         // Don't broadcast the JOIN to the channel because other members
         // already know this user is in the channel.
         sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
-        ctx.emit.channelOpen(ctx, chanName, user);
+        ctx.emit.channelOpen(ctx.Server, chanName, user.id);
         chan.forEach(function (u) {
             if (u === user) { return; }
             sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
@@ -129,7 +130,7 @@ const handleJoin = function (ctx, args) {
     sendMsg(ctx, user, [seq, 'JACK', chanName]);
 
     chan.id = chanName;
-    ctx.emit.channelOpen(ctx, chanName, user);
+    ctx.emit.channelOpen(ctx.Server, chanName, user.id);
     chan.forEach(function (u) { sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]); });
     chan.push(user);
     sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
@@ -142,7 +143,7 @@ const handleMsg = function (ctx, args) {
     let json = args.json;
 
     if (typeof(ctx.registered[obj]) === 'function') {
-        return void ctx.registered[obj](ctx, seq, user, json);
+        return void ctx.registered[obj](ctx.Server, seq, user, json);
     }
 
     if (obj && !ctx.channels[obj] && !ctx.users[obj]) {
@@ -246,9 +247,9 @@ module.exports.create = function (socketServer) {
     const handlers = {};
 
     [
-        'channelMessage', // (ctx, channelName, msgStruct)
+        'channelMessage', // (Server, channelName, msgStruct)
         'channelClose',   // (channelName, reason)
-        'channelOpen',    // (ctx, channelName, user)
+        'channelOpen',    // (Server, channelName, userId)
         'sessionClose',   // (userId, reason)
         'error',          // (err, label, info)
     ].forEach(function (key) {
@@ -258,7 +259,6 @@ module.exports.create = function (socketServer) {
             for (var i = 0; i < l; i++) {
                 stack[i].apply(null, arguments);
             }
-            return Server;
         };
     });
 
@@ -306,10 +306,51 @@ module.exports.create = function (socketServer) {
         sendMsg: sendMsg,
         emit: emit,
         registered: registered,
+        Server: Server,
+    };
+
+    Server.channelBroadcast = function (channel, msg, from) {
+        const chan = ctx.channels[channel] || [];
+        chan.forEach(function (user) {
+            sendMsg(ctx, user, [0, from, 'MSG', user.id, JSON.stringify(msg)]);
+        });
+    };
+
+    Server.send = function (userId, msg, cb) {
+        sendMsg(ctx, ctx.users[userId], msg, cb);
+    };
+
+    Server.getSessionStats = function () {
+        var users = Object.keys(ctx.users);
+        var total = users.length;
+
+        var ips = [];
+        users.forEach(function (u) {
+            var user = ctx.users[u];
+            var socket = user.socket;
+            var req = socket.upgradeReq;
+            var conn = req && req.connection;
+            var ip = (req && req.headers && req.headers['x-forwarded-for']) || (conn && conn.remoteAddress);
+            if (ip && ips.indexOf(ip) === -1) {
+                ips.push(ip);
+            }
+        });
+        return {
+            total: total,
+            unique: ips.length
+        };
+    };
+
+    Server.getActiveChannelCount = function () {
+        return Object.keys(ctx.channels);
     };
 
     ctx.dropUser = function (user, reason) {
         dropUser(ctx, user, reason);
+    };
+
+    ctx.clearChannel = function (channel) {
+        delete ctx.channels[channel];
     };
 
     ctx.userActivityInterval = setInterval(function () {
@@ -318,7 +359,6 @@ module.exports.create = function (socketServer) {
     ctx.channelActivityInterval = setInterval(function () {
         dropEmptyChannels(ctx);
     }, 60000);
-
 
     var createUniqueName = function () {
         var name = randName();
@@ -352,7 +392,7 @@ module.exports.create = function (socketServer) {
             }
         });
         var drop = function () {
-            ctx.dropUser(ctx.users[user.id]);
+            ctx.dropUser(user);
         };
         socket.on('close', drop);
         socket.on('error', function (err) {
