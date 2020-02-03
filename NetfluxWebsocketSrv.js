@@ -143,7 +143,7 @@ const handleMsg = function (ctx, args) {
     let json = args.json;
 
     if (typeof(ctx.registered[obj]) === 'function') {
-        return void ctx.registered[obj](ctx.Server, seq, user, json);
+        return void ctx.registered[obj](ctx.Server, seq, user.id, json);
     }
 
     if (obj && !ctx.channels[obj] && !ctx.users[obj]) {
@@ -303,10 +303,11 @@ module.exports.create = function (socketServer) {
         users: {},
         channels: {},
         timeouts: {},
-        sendMsg: sendMsg,
+        intervals: {},
         emit: emit,
         registered: registered,
         Server: Server,
+        active: true,
     };
 
     Server.channelBroadcast = function (channel, msg, from) {
@@ -318,6 +319,13 @@ module.exports.create = function (socketServer) {
 
     Server.send = function (userId, msg, cb) {
         sendMsg(ctx, ctx.users[userId], msg, cb);
+    };
+
+    Server.getChannelUserList = function (channel) {
+        const chan = ctx.channels[channel] || [];
+        return chan.map(function (user) {
+            return user.id;
+        });
     };
 
     Server.getSessionStats = function () {
@@ -342,7 +350,27 @@ module.exports.create = function (socketServer) {
     };
 
     Server.getActiveChannelCount = function () {
-        return Object.keys(ctx.channels);
+        return Object.keys(ctx.channels).length;
+    };
+
+    Server.channelContainsUser = function (channelId, userId) {
+        var channel = ctx.channels[channelId];
+        if (!Array.isArray(channel)) { return false; }
+        return channel.some(function (user) {
+            if (user.id === userId) { return true; }
+        });
+    };
+
+    Server.shutdown = function () {
+        if (!ctx.active) { return; }
+        ctx.active = false;
+
+        // stop accepting new connections
+        socketServer.close();
+
+        Object.keys(ctx.intervals).forEach(function (name) {
+            clearInterval(ctx.intervals[name]);
+        });
     };
 
     ctx.dropUser = function (user, reason) {
@@ -353,10 +381,10 @@ module.exports.create = function (socketServer) {
         delete ctx.channels[channel];
     };
 
-    ctx.userActivityInterval = setInterval(function () {
+    ctx.intervals.userActivityInterval = setInterval(function () {
         checkUserActivity(ctx);
     }, 5000);
-    ctx.channelActivityInterval = setInterval(function () {
+    ctx.intervals.channelActivityInterval = setInterval(function () {
         dropEmptyChannels(ctx);
     }, 60000);
 
@@ -367,6 +395,8 @@ module.exports.create = function (socketServer) {
     };
 
     socketServer.on('connection', function(socket, req) {
+        // refuse new connections if the server is shutting down
+        if (!ctx.active) { return; }
         if (!socket.upgradeReq) { socket.upgradeReq = req; }
         let conn = socket.upgradeReq.connection;
         let user = {
