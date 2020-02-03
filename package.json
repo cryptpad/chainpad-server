@@ -1,20 +1,18 @@
 {
   "name": "chainpad-server",
   "description": "api backend for realtime collaborative visual editor with zero knowlege server",
-  "version": "3.0.6",
+  "version": "4.0.0",
   "dependencies": {
-    "nthen": "^0.1.8",
+    "nthen": "0.1.8",
     "pull-stream": "^3.6.9",
     "stream-to-pull-stream": "^1.7.3",
-    "tweetnacl": "~0.12.2",
     "ws": "^3.3.1"
   },
+  "main": "NetfluxWebsocketSrv.js",
   "devDependencies": {
-    "flow-bin": "^0.63.1",
     "jshint": "^2.9.7"
   },
   "scripts": {
-    "lint": "jshint --config .jshintrc --exclude-path .jshintignore .",
-    "flow": "./node_modules/.bin/flow"
+    "lint": "jshint --config .jshintrc --exclude-path .jshintignore ."
   }
 }
