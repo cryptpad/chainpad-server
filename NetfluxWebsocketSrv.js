@@ -45,7 +45,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
 
     channel.forEach(function (user) {
         // We don't want to send back a message to its sender, in order to save bandwidth
-        if (msgStruct[2] !== 'MSG' || user.id === msgStruct[1]) {
+        if (msgStruct[2] !== 'MSG' || user.id !== msgStruct[1]) {
             sendMsg(ctx, user, msgStruct);
         }
     });
