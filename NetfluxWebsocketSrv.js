@@ -391,13 +391,12 @@ module.exports.create = function (socketServer) {
                 ctx.dropUser(user, 'BAD_MESSAGE');
             }
         });
-        var drop = function () {
-            ctx.dropUser(user);
-        };
-        socket.on('close', drop);
+        socket.on('close', function () {
+            ctx.dropUser(user, 'SOCKET_CLOSED');
+        });
         socket.on('error', function (err) {
             emit.error(err, 'NETFLUX_WEBSOCKET_ERROR');
-            drop();
+            ctx.dropUser(user, 'SOCKET_ERROR');
         });
     });
 
