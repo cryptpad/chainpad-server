@@ -377,7 +377,7 @@ module.exports.create = function (socketServer) {
         dropUser(ctx, user, reason);
     };
 
-    ctx.clearChannel = function (channel) {
+    Server.clearChannel = function (channel) {
         delete ctx.channels[channel];
     };
 
