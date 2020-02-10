@@ -13,9 +13,18 @@ const socketSendable = function (socket) {
 // Try to keep 4MB of data in queue, if there's more on the buffer, hold off.
 const QUEUE_CHR = 1024 * 1024 * 4;
 
+// FIXME there are many circumstances under which call back
+// possible cause of a memory leak?
 const sendMsg = function (ctx, user, msg, cb) {
-    if (!user) { return; }
-    if (!socketSendable(user.socket)) { return; }
+    const _cb = function (err) {
+        if (typeof(cb) !== 'function') { return; }
+        cb(err);
+    };
+
+    // don't bother trying to send if the user doesn't exist anymore
+    if (!user) { return void _cb("NO_USER"); }
+    // or if you determine that it's unsendable
+    if (!socketSendable(user.socket)) { return void _cb("UNSENDABLE"); }
     try {
         const strMsg = JSON.stringify(msg);
         user.inQueue += strMsg.length;
@@ -32,6 +41,7 @@ const sendMsg = function (ctx, user, msg, cb) {
             }
         });
     } catch (e) {
+        // call back any pending callbacks before you drop the user
         ctx.emit.error(e, 'SEND_MESSAGE_FAIL_2');
         ctx.dropUser(user, 'SEND_MESSAGE_FAIL_2');
     }
