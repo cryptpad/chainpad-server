@@ -66,6 +66,38 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
     }
 };
 
+const channelIsEmpty = function (ctx, channelId) {
+    const channel = ctx.channels[channelId];
+    return Boolean(channel && channel.length === 0);
+};
+
+const closeChannel = function (ctx, chanName) {
+    delete ctx.channels[chanName];
+    ctx.emit.channelClose(chanName, 'REMOVE_EMPTY_CHANNEL');
+};
+
+const removeFromChannel = function (ctx, channelId, userId) {
+    const channel = ctx.channels[channelId];
+    if (!Array.isArray(channel)) { return false; }
+
+    var index = -1;
+    channel.some(function (user, i) {
+        if (user.id !== userId) { return false; }
+        index = i;
+        return true;
+    });
+
+    if (index === -1) { return false; }
+    channel.splice(index, 1);
+
+    // closeChannel if it is empty...
+    if (channelIsEmpty(ctx, channel)) {
+        closeChannel(ctx, channelId);
+    }
+
+    return true;
+};
+
 const WEBSOCKET_CLOSING = 2;
 const WEBSOCKET_CLOSED = 3;
 
@@ -86,17 +118,13 @@ const dropUser = function (ctx, user, reason) {
     }
     delete ctx.users[user.id];
     Object.keys(ctx.channels).forEach(function (chanName) {
-        let chan = ctx.channels[chanName];
-        if (!chan) { return; }
-        let idx = chan.indexOf(user);
-        if (idx < 0) { return; }
+        const removed = removeFromChannel(ctx, chanName, user.id);
+        if (!removed) { return; }
 
-        chan.splice(idx, 1);
-        if (chan.length === 0) {
-            delete ctx.channels[chanName];
-            ctx.emit.channelClose(chanName, 'REMOVE_EMPTY_CHANNEL');
+        if (channelIsEmpty(ctx, chanName)) {
+            closeChannel(ctx, chanName);
         } else {
-            sendChannelMessage(ctx, chan, [user.id, 'LEAVE', chanName, 'Quit: [ dropUser() ]']);
+            sendChannelMessage(ctx, ctx.channels[chanName], [user.id, 'LEAVE', chanName, 'Quit: [ dropUser() ]']);
         }
     });
     ctx.emit.sessionClose(user.id, reason);
@@ -381,6 +409,10 @@ module.exports.create = function (socketServer) {
         Object.keys(ctx.intervals).forEach(function (name) {
             clearInterval(ctx.intervals[name]);
         });
+    };
+
+    Server.removeFromChannel = function (channelId, userId) {
+        return removeFromChannel(ctx, channelId, userId);
     };
 
     ctx.dropUser = function (user, reason) {
