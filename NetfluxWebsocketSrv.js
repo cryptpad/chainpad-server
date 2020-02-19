@@ -151,27 +151,30 @@ const handleJoin = function (ctx, args) {
     let chanName = obj || randName();
     let chan = ctx.channels[chanName] = ctx.channels[chanName] || [];
 
-    if (chan.indexOf(user) !== -1) {
-        // If the user is already in the channel, don't add it again.
-        // Send an EJOINED, and send the userlist.
-        // Don't broadcast the JOIN to the channel because other members
-        // already know this user is in the channel.
+    // check whether they're in the channel
+    var userIndex = chan.indexOf(user);
+    if (userIndex !== -1) {
         sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
-        ctx.emit.channelOpen(ctx.Server, chanName, user.id);
+    } else {
+        sendMsg(ctx, user, [seq, 'JACK', chanName]);
+        chan.id = chanName;
+    }
+
+    ctx.emit.channelOpen(ctx.Server, chanName, user.id);
+
+    // userIndex = chan.indexOf(user); XXX RESTRICT (update userIndex in case of asynchrony)
+    if (userIndex !== -1) {
         chan.forEach(function (u) {
             if (u === user) { return; }
             sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
         });
         return void sendMsg(ctx, user, [0, user.id, 'JOIN', chanName]);
     }
-
-    sendMsg(ctx, user, [seq, 'JACK', chanName]);
-
-    chan.id = chanName;
-    ctx.emit.channelOpen(ctx.Server, chanName, user.id);
-    chan.forEach(function (u) { sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]); });
+    chan.forEach(function (u) {
+        sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
+    });
     chan.push(user);
-    sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
+    return void sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
 };
 
 const handleMsg = function (ctx, args) {
