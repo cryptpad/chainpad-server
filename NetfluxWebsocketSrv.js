@@ -160,21 +160,34 @@ const handleJoin = function (ctx, args) {
         chan.id = chanName;
     }
 
-    ctx.emit.channelOpen(ctx.Server, chanName, user.id);
+    var called = false;
+    var next = function () {
+        if (called) { return; }
+        called = true;
 
-    // userIndex = chan.indexOf(user); XXX RESTRICT (update userIndex in case of asynchrony)
-    if (userIndex !== -1) {
+        var userIndex = chan.indexOf(user);
+        if (userIndex !== -1) {
+            chan.forEach(function (u) {
+                if (u === user) { return; }
+                sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
+            });
+            return void sendMsg(ctx, user, [0, user.id, 'JOIN', chanName]);
+        }
         chan.forEach(function (u) {
-            if (u === user) { return; }
             sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
         });
-        return void sendMsg(ctx, user, [0, user.id, 'JOIN', chanName]);
-    }
-    chan.forEach(function (u) {
-        sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
-    });
-    chan.push(user);
-    return void sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
+        chan.push(user);
+        return void sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
+    };
+
+    var waiting = false;
+    var wait = function () {
+        waiting = true;
+        return next;
+    };
+
+    ctx.emit.channelOpen(ctx.Server, chanName, user.id, wait);
+    if (!waiting) { next(); }
 };
 
 const handleMsg = function (ctx, args) {
