@@ -161,9 +161,13 @@ const handleJoin = function (ctx, args) {
     }
 
     var called = false;
-    var next = function () {
+    var next = function (err) {
         if (called) { return; }
         called = true;
+
+        if (err) {
+            return void sendMsg(ctx, user, [seq, 'ERROR', err, chanName]);
+        }
 
         var userIndex = chan.indexOf(user);
         if (userIndex !== -1) {
