@@ -13,6 +13,8 @@ const socketSendable = function (socket) {
 // Try to keep 4MB of data in queue, if there's more on the buffer, hold off.
 const QUEUE_CHR = 1024 * 1024 * 4;
 
+const noop = function () {};
+
 // FIXME there are many circumstances under which call back
 // possible cause of a memory leak?
 const sendMsg = function (ctx, user, msg, cb) {
@@ -52,7 +54,11 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
     // the on-wire implementation isn't a part of the netflux spec
     // though it seems like it ought to be if we want interoperability between
     // different server and client implementations
-    msgStruct.unshift(0); // TODO document this
+
+    // every message has a 'sequence number', like a txid. Netflux clients
+    // use this to determine if a message is a response to something they sent.
+    // a zero indicates that it's not.
+    msgStruct.unshift(0);
 
     channel.forEach(function (user) {
         // We don't want to send back a message to its sender, in order to save bandwidth
@@ -76,26 +82,44 @@ const closeChannel = function (ctx, chanName) {
     ctx.emit.channelClose(chanName, 'REMOVE_EMPTY_CHANNEL');
 };
 
-const removeFromChannel = function (ctx, channelId, userId) {
+const removeFromChannel = function (ctx, channelId, userIds) {
     const channel = ctx.channels[channelId];
     if (!Array.isArray(channel)) { return false; }
 
-    var index = -1;
-    channel.some(function (user, i) {
-        if (user.id !== userId) { return false; }
-        index = i;
-        return true;
-    });
-
-    if (index === -1) { return false; }
-    channel.splice(index, 1);
-
-    // closeChannel if it is empty...
-    if (channelIsEmpty(ctx, channel)) {
-        closeChannel(ctx, channelId);
+    if (!Array.isArray(userIds)) {
+        return false;
     }
 
-    return true;
+    const removed = [];
+    userIds.forEach(function (userId) {
+        var index = -1;
+        channel.some(function (user, i) {
+            if (user.id !== userId) { return false; }
+            index = i;
+            return true;
+        });
+        if (index === -1) { return false; }
+        channel.splice(index, 1);
+        removed.push(userId);
+    });
+
+    if (channelIsEmpty) {
+        closeChannel(ctx, channelId);
+    } else {
+        // if there's still anyone in the channel we need to update their userlist
+        // forEach on an empty array is equivalent to if (removed.length === 0)...
+        removed.forEach(function (userId) {
+            // tell all remaining users about the users who 'left'
+            sendChannelMessage(ctx, channel, [
+                userId,
+                'LEAVE',
+                channelId
+            ]);
+        });
+    }
+
+    // return a boolean indicating whether there was a change
+    return removed.length !== 0;
 };
 
 const WEBSOCKET_CLOSING = 2;
@@ -150,37 +174,52 @@ const handleJoin = function (ctx, args) {
 
     let chanName = obj || randName();
     let chan = ctx.channels[chanName] = ctx.channels[chanName] || [];
-
-    // check whether they're in the channel
-    var userIndex = chan.indexOf(user);
-    if (userIndex !== -1) {
-        sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
-    } else {
-        sendMsg(ctx, user, [seq, 'JACK', chanName]);
-        chan.id = chanName;
-    }
+    chan.id = chanName;
 
     var called = false;
-    var next = function (err) {
+    var next = function (err, message, preUserListFunction) {
         if (called) { return; }
         called = true;
 
         if (err) {
-            return void sendMsg(ctx, user, [seq, 'ERROR', err, chanName]);
+            return void sendMsg(ctx, user, [seq, 'ERROR', err, message]);
         }
 
+        // check whether they're in the channel
         var userIndex = chan.indexOf(user);
+
         if (userIndex !== -1) {
+            // this block handles a special case where someone is trying to join
+            // and the server believes that they already have. we allow them
+            // to join, but avoid creating duplicate entries for them in the userlist
+            sendMsg(ctx, user, [seq, 'ERROR', 'EJOINED', chanName]);
+
+            // this supports the 'historyKeeper' use-case,
+            // in which a special user inserts themself into the userlist
+            // before the user has completely joined>
+            preUserListFunction();
+
+            // send you everybody else's username (so you can construct the userlist)
             chan.forEach(function (u) {
                 if (u === user) { return; }
                 sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
             });
+
+            // we inform the user that they are in the channel once we've finished everything else
+            // they interpret their having joined as indicating that the userlist is synchronized
             return void sendMsg(ctx, user, [0, user.id, 'JOIN', chanName]);
         }
+        sendMsg(ctx, user, [seq, 'JACK', chanName]);
+        preUserListFunction();
+
+        // send you everybody else's username (so you can construct the userlist)
         chan.forEach(function (u) {
             sendMsg(ctx, user, [0, u.id, 'JOIN', chanName]);
         });
+        // then add you to the userlist
         chan.push(user);
+
+        // we tell everybody that you are in the channel (including you)
         return void sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
     };
 
@@ -191,7 +230,7 @@ const handleJoin = function (ctx, args) {
     };
 
     ctx.emit.channelOpen(ctx.Server, chanName, user.id, wait);
-    if (!waiting) { next(); }
+    if (!waiting) { next(undefined, undefined, noop); }
 };
 
 const handleMsg = function (ctx, args) {
