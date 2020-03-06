@@ -103,7 +103,7 @@ const removeFromChannel = function (ctx, channelId, userIds) {
         removed.push(userId);
     });
 
-    if (channelIsEmpty) {
+    if (channelIsEmpty(ctx, channelId)) {
         closeChannel(ctx, channelId);
     } else {
         // if there's still anyone in the channel we need to update their userlist
@@ -142,14 +142,7 @@ const dropUser = function (ctx, user, reason) {
     }
     delete ctx.users[user.id];
     Object.keys(ctx.channels).forEach(function (chanName) {
-        const removed = removeFromChannel(ctx, chanName, user.id);
-        if (!removed) { return; }
-
-        if (channelIsEmpty(ctx, chanName)) {
-            closeChannel(ctx, chanName);
-        } else {
-            sendChannelMessage(ctx, ctx.channels[chanName], [user.id, 'LEAVE', chanName, 'Quit: [ dropUser() ]']);
-        }
+        removeFromChannel(ctx, chanName, user.id);
     });
     ctx.emit.sessionClose(user.id, reason);
 };
