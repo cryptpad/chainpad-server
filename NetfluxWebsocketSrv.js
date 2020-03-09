@@ -84,6 +84,7 @@ const closeChannel = function (ctx, chanName) {
 
 const removeFromChannel = function (ctx, channelId, userIds) {
     const channel = ctx.channels[channelId];
+
     if (!Array.isArray(channel)) { return false; }
 
     if (!Array.isArray(userIds)) {
@@ -142,7 +143,7 @@ const dropUser = function (ctx, user, reason) {
     }
     delete ctx.users[user.id];
     Object.keys(ctx.channels).forEach(function (chanName) {
-        removeFromChannel(ctx, chanName, user.id);
+        removeFromChannel(ctx, chanName, [user.id]);
     });
     ctx.emit.sessionClose(user.id, reason);
 };
@@ -463,8 +464,8 @@ module.exports.create = function (socketServer) {
         });
     };
 
-    Server.removeFromChannel = function (channelId, userId) {
-        return removeFromChannel(ctx, channelId, userId);
+    Server.removeFromChannel = function (channelId, userIds) {
+        return removeFromChannel(ctx, channelId, userIds);
     };
 
     ctx.dropUser = function (user, reason) {
