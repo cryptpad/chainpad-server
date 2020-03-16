@@ -127,6 +127,7 @@ const WEBSOCKET_CLOSING = 2;
 const WEBSOCKET_CLOSED = 3;
 
 const dropUser = function (ctx, user, reason) {
+    if (!user || !user.socket) { return; }
     if (user.socket.readyState !== WEBSOCKET_CLOSING
         && user.socket.readyState !== WEBSOCKET_CLOSED)
     {
@@ -311,12 +312,16 @@ const checkUserActivity = function (ctx) {
     var time = now();
     Object.keys(ctx.users).forEach(function (userId) {
         let u = ctx.users[userId];
-        if (time - u.timeOfLastMessage > LAG_MAX_BEFORE_DISCONNECT) {
-            ctx.dropUser(u, "INACTIVITY");
-        }
-        if (!u.pingOutstanding && time - u.timeOfLastMessage > LAG_MAX_BEFORE_PING) {
-            sendMsg(ctx, u, [0, '', 'PING', now()]);
-            u.pingOutstanding = true;
+        try {
+            if (time - u.timeOfLastMessage > LAG_MAX_BEFORE_DISCONNECT) {
+                ctx.dropUser(u, "INACTIVITY");
+            }
+            if (!u.pingOutstanding && time - u.timeOfLastMessage > LAG_MAX_BEFORE_PING) {
+                sendMsg(ctx, u, [0, '', 'PING', now()]);
+                u.pingOutstanding = true;
+            }
+        } catch (err) {
+            ctx.emit.error(err, 'USER_ACTIVITY_CHECK');
         }
     });
 };
@@ -468,8 +473,8 @@ module.exports.create = function (socketServer) {
         return removeFromChannel(ctx, channelId, userIds);
     };
 
-    ctx.dropUser = function (user, reason) {
-        dropUser(ctx, user, reason);
+    ctx.dropUser = function (userId, reason) {
+        dropUser(ctx, ctx.users[userId], reason);
     };
 
     Server.clearChannel = function (channel) {
