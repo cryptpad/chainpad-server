@@ -473,8 +473,8 @@ module.exports.create = function (socketServer) {
         return removeFromChannel(ctx, channelId, userIds);
     };
 
-    ctx.dropUser = function (userId, reason) {
-        dropUser(ctx, ctx.users[userId], reason);
+    ctx.dropUser = function (user, reason) {
+        dropUser(ctx, user, reason);
     };
 
     Server.clearChannel = function (channel) {
