@@ -228,6 +228,10 @@ const handleJoin = function (ctx, args) {
     if (!waiting) { next(undefined, undefined, noop); }
 };
 
+const isDefined = function (x) {
+    return typeof(x) !== 'undefined';
+};
+
 const handleMsg = function (ctx, args) {
     let obj = args.obj;
     let seq = args.seq;
@@ -239,7 +243,11 @@ const handleMsg = function (ctx, args) {
     }
 
     if (obj && !ctx.channels[obj] && !ctx.users[obj]) {
-        return void sendMsg(ctx, user, [seq, 'ERROR', 'ENOENT', obj]);
+        ctx.emit.error(new Error('NF_ENOENT'), 'NF_ENOENT', {
+            user: isDefined(user && user.id)? user.id: 'MISSING',
+            json: json || 'MISSING',
+        });
+        return void sendMsg(ctx, user, [seq, 'ERROR', 'enoent', obj]);
     }
     sendMsg(ctx, user, [seq, 'ACK']);
     let target;
