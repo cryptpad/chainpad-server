@@ -168,9 +168,6 @@ const handleJoin = function (ctx, args) {
     let seq = args.seq;
 
     let chanName = obj || randName();
-    let chan = ctx.channels[chanName] = ctx.channels[chanName] || [];
-    chan.id = chanName;
-
     var called = false;
     var next = function (err, message, preUserListFunction) {
         if (called) { return; }
@@ -179,6 +176,8 @@ const handleJoin = function (ctx, args) {
         if (err) {
             return void sendMsg(ctx, user, [seq, 'ERROR', err, message]);
         }
+        let chan = ctx.channels[chanName] = ctx.channels[chanName] || [];
+        chan.id = chanName;
 
         // check whether they're in the channel
         var userIndex = chan.indexOf(user);
