@@ -49,7 +49,8 @@ const sendMsg = function (ctx, user, msg, cb) {
     }
 };
 
-const sendChannelMessage = function (ctx, channel, msgStruct) {
+const sendChannelMessage = function (ctx, channel, msgStruct, cb) {
+    if (typeof(cb) !== "function") { cb = function () {}; }
     // we always put a 0 at the beginning of the array for a channel message
     // the on-wire implementation isn't a part of the netflux spec
     // though it seems like it ought to be if we want interoperability between
@@ -60,16 +61,38 @@ const sendChannelMessage = function (ctx, channel, msgStruct) {
     // a zero indicates that it's not.
     msgStruct.unshift(0);
 
-    channel.forEach(function (user) {
-        // We don't want to send back a message to its sender, in order to save bandwidth
-        if (msgStruct[2] !== 'MSG' || user.id !== msgStruct[1]) {
-            sendMsg(ctx, user, msgStruct);
+
+    const send = function (offset) {
+        // storeMessage pushes the time at the end of the array.
+        // extract it and include it in our new "opts" object
+        let time;
+        if (typeof(msgStruct[msgStruct.length - 1]) === "number") {
+            time = msgStruct.pop();
         }
-    });
+        if (offset || time) {
+            msgStruct.push({
+                time: time,
+                offset: offset
+            });
+        }
+        channel.forEach(function (user) {
+            // We don't want to send back a message to its sender, in order to save bandwidth
+            if (msgStruct[2] !== 'MSG' || user.id !== msgStruct[1]) {
+                sendMsg(ctx, user, msgStruct);
+            }
+        });
+        cb(void 0, offset);
+    };
 
     if (msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
-        ctx.emit.channelMessage(ctx.Server, channel, msgStruct);
+        ctx.emit.channelMessage(ctx.Server, channel, msgStruct, function (err, offset) {
+            if (err) { return void cb(err); } // storeMessage will already log errors
+            send(offset);
+        });
+        return;
     }
+
+    send();
 };
 
 const channelIsEmpty = function (ctx, channelId) {
@@ -248,12 +271,18 @@ const handleMsg = function (ctx, args) {
         });
         return void sendMsg(ctx, user, [seq, 'ERROR', 'enoent', obj]);
     }
-    sendMsg(ctx, user, [seq, 'ACK']);
     let target;
     json.unshift(user.id);
     if ((target = ctx.channels[obj])) {
-        return void sendChannelMessage(ctx, target, json);
+        return void sendChannelMessage(ctx, target, json, function (err, msgOffset) {
+            if (err) {
+                return void sendMsg(ctx, user, [seq, 'ERROR']);
+            }
+            sendMsg(ctx, user, [seq, 'ACK', {offset: msgOffset}]);
+        });
     }
+
+    sendMsg(ctx, user, [seq, 'ACK']);
     if ((target = ctx.users[obj])) {
         json.unshift(0);
         return void sendMsg(ctx, target, json);
