@@ -264,7 +264,7 @@ const handleMsg = function (ctx, args) {
     if ((target = ctx.channels[obj])) {
         return void sendChannelMessage(ctx, target, json, function (err) {
             if (err) { return void sendMsg(ctx, user, [seq, 'ERROR']); }
-            sendMsg(ctx, user, [seq, 'ACK', {offset: msgOffset}]);
+            sendMsg(ctx, user, [seq, 'ACK']);
         });
     }
 
