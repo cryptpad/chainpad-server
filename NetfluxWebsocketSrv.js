@@ -15,6 +15,8 @@ const QUEUE_CHR = 1024 * 1024 * 4;
 
 const noop = function () {};
 
+const ADMIN_CHANNEL_LENGTH = 33;
+
 // FIXME there are many circumstances under which call back
 // possible cause of a memory leak?
 const sendMsg = function (ctx, user, msg, cb) {
@@ -188,6 +190,16 @@ const handleJoin = function (ctx, args) {
         }
         let chan = ctx.channels[chanName] = ctx.channels[chanName] || [];
         chan.id = chanName;
+
+        // No userlist for admin channels (broadcast to all users)
+        if (chan.id.length === ADMIN_CHANNEL_LENGTH) {
+            // Join callback
+            sendMsg(ctx, user, [seq, 'JACK', chanName]);
+            // Send HK id
+            preUserListFunction();
+            // Send your ID to complete the JOIN process
+            return void sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
+        }
 
         // check whether they're in the channel
         var userIndex = chan.indexOf(user);
@@ -441,6 +453,11 @@ module.exports.create = function (socketServer) {
     };
 
     Server.getChannelUserList = function (channel) {
+        // Admin channel: broadcast to everybody without storing a userlist in memory
+        if (channel.length === ADMIN_CHANNEL_LENGTH) {
+            return Object.keys(ctx.users);
+        }
+        // "Classic" channel
         const chan = ctx.channels[channel] || [];
         return chan.map(function (user) {
             return user.id;
