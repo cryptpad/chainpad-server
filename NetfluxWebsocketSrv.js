@@ -198,7 +198,7 @@ const handleJoin = function (ctx, args) {
             // Send HK id
             preUserListFunction();
             // Send your ID to complete the JOIN process
-            return void sendChannelMessage(ctx, chan, [user.id, 'JOIN', chanName]);
+            return void sendMsg(ctx, user, [0, user.id, 'JOIN', chanName]);
         }
 
         // check whether they're in the channel
