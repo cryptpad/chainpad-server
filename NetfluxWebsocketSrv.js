@@ -178,6 +178,8 @@ const handleJoin = function (ctx, args) {
     let obj = args.obj;
     let user = args.user;
     let seq = args.seq;
+    let json = args.json;
+    const signature = json[2];
 
     let chanName = obj || randName();
     var called = false;
@@ -245,7 +247,7 @@ const handleJoin = function (ctx, args) {
         return next;
     };
 
-    ctx.emit.channelOpen(ctx.Server, chanName, user.id, wait);
+    ctx.emit.channelOpen(ctx.Server, chanName, user.id, wait, signature);
     if (!waiting) { next(undefined, undefined, noop); }
 };
 
