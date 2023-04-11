@@ -64,10 +64,12 @@ const sendChannelMessage = function (ctx, channel, msgStruct, cb) {
     // a zero indicates that it's not.
     msgStruct.unshift(0);
 
+    const userId = msgStruct[1];
+
     const send = function () {
         channel.forEach(function (user) {
             // We don't want to send back a message to its sender, in order to save bandwidth
-            if (msgStruct[2] !== 'MSG' || user.id !== msgStruct[1]) {
+            if (msgStruct[2] !== 'MSG' || user.id !== userId) {
                 sendMsg(ctx, user, msgStruct);
             }
         });
@@ -75,7 +77,7 @@ const sendChannelMessage = function (ctx, channel, msgStruct, cb) {
     };
 
     if (msgStruct[2] === 'MSG' && typeof(msgStruct[4]) === 'string') {
-        ctx.emit.channelMessage(ctx.Server, channel, msgStruct, function (err) {
+        ctx.emit.channelMessage(ctx.Server, channel, userId, msgStruct, function (err) {
             if (err) { return void cb(err); } // storeMessage will already log errors
             send();
         });
@@ -277,7 +279,7 @@ const handleMsg = function (ctx, args) {
     json.unshift(user.id);
     if ((target = ctx.channels[obj])) {
         return void sendChannelMessage(ctx, target, json, function (err) {
-            if (err) { return void sendMsg(ctx, user, [seq, 'ERROR']); }
+            if (err) { return void sendMsg(ctx, user, [seq, 'ERROR', err]); }
             sendMsg(ctx, user, [seq, 'ACK']);
         });
     }
@@ -380,7 +382,7 @@ module.exports.create = function (socketServer) {
     const handlers = {};
 
     [
-        'channelMessage', // (Server, channelName, msgStruct)
+        'channelMessage', // (Server, channelName, userId, msgStruct)
         'channelClose',   // (channelName, reason)
         'channelOpen',    // (Server, channelName, userId)
         'sessionClose',   // (userId, reason)
