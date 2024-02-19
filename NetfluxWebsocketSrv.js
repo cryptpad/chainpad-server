@@ -382,6 +382,7 @@ module.exports.create = function (socketServer) {
         'channelClose',   // (channelName, reason)
         'channelOpen',    // (Server, channelName, userId)
         'sessionClose',   // (userId, reason)
+        'sessionOpen',   // (userId, reason)
         'error',          // (err, label, info)
     ].forEach(function (key) {
         const stack = handlers[key] = [];
@@ -550,6 +551,10 @@ module.exports.create = function (socketServer) {
         };
         ctx.users[user.id] = user;
         sendMsg(ctx, user, [0, '', 'IDENT', user.id]);
+
+        let ip = (req.headers && req.headers['x-real-ip']) || req.socket.remoteAddress;
+        ctx.emit.sessionOpen(user.id, ip.replace(/^::ffff:/, ''));
+
         socket.on('message', function(message) {
             try {
                 handleMessage(ctx, user, message);
