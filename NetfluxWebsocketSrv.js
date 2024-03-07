@@ -158,7 +158,7 @@ const dropUser = function (ctx, user, reason) {
     Object.keys(ctx.channels).forEach(function (chanName) {
         removeFromChannel(ctx, chanName, [user.id]);
     });
-    ctx.emit.sessionClose(user.id, reason);
+    ctx.emit.sessionClose(user.id, reason, user.ip);
 };
 
 const handleChannelLeave = function (ctx, channel) {
@@ -381,8 +381,8 @@ module.exports.create = function (socketServer) {
         'channelMessage', // (Server, channelName, msgStruct)
         'channelClose',   // (channelName, reason)
         'channelOpen',    // (Server, channelName, userId)
-        'sessionClose',   // (userId, reason)
-        'sessionOpen',   // (userId, reason)
+        'sessionClose',   // (userId, reason, ip)
+        'sessionOpen',   // (userId, ip)
         'error',          // (err, label, info)
     ].forEach(function (key) {
         const stack = handlers[key] = [];
@@ -540,6 +540,7 @@ module.exports.create = function (socketServer) {
         if (!ctx.active) { return; }
         if (!socket.upgradeReq) { socket.upgradeReq = req; }
         let conn = socket.upgradeReq.connection;
+        let ip = (req.headers && req.headers['x-real-ip']) || req.socket.remoteAddress || '';
         let user = {
             addr: conn.remoteAddress + '|' + conn.remotePort,
             socket: socket,
@@ -547,13 +548,13 @@ module.exports.create = function (socketServer) {
             timeOfLastMessage: now(),
             pingOutstanding: false,
             inQueue: 0,
+            ip: ip.replace(/^::ffff:/, ''),
             sendMsgCallbacks: []
         };
         ctx.users[user.id] = user;
         sendMsg(ctx, user, [0, '', 'IDENT', user.id]);
 
-        let ip = (req.headers && req.headers['x-real-ip']) || req.socket.remoteAddress;
-        ctx.emit.sessionOpen(user.id, ip.replace(/^::ffff:/, ''));
+        ctx.emit.sessionOpen(user.id, user.ip);
 
         socket.on('message', function(message) {
             try {
