@@ -465,6 +465,9 @@ module.exports.create = function (socketServer) {
         });
     };
 
+    Server.getOnlineUsers = function () {
+        return Object.keys(ctx.users);
+    };
     Server.getSessionStats = function () {
         var users = Object.keys(ctx.users);
         var total = users.length;
@@ -486,6 +489,9 @@ module.exports.create = function (socketServer) {
         };
     };
 
+    Server.getActiveChannels = function () {
+        return Object.keys(ctx.channels);
+    };
     Server.getActiveChannelCount = function () {
         return Object.keys(ctx.channels).length;
     };
