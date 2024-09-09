@@ -1,7 +1,7 @@
 /* jshint esversion: 6 */
 const Crypto = require('crypto');
 
-const LAG_MAX_BEFORE_DISCONNECT = 30000;
+const LAG_MAX_BEFORE_DISCONNECT = 60000;
 const LAG_MAX_BEFORE_PING = 15000;
 
 const now = function () { return (new Date()).getTime(); };
