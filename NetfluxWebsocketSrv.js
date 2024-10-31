@@ -25,6 +25,7 @@ const sendMsg = function (ctx, user, msg, cb) {
         cb(err);
     };
 
+    const stats = ctx.stats;
     // don't bother trying to send if the user doesn't exist anymore
     if (!user) { return void _cb("NO_USER"); }
     // or if you determine that it's unsendable
@@ -33,6 +34,10 @@ const sendMsg = function (ctx, user, msg, cb) {
         const strMsg = JSON.stringify(msg);
         user.inQueue += strMsg.length;
         if (cb) { user.sendMsgCallbacks.push(cb); }
+        if (stats) {
+            stats.sent = (stats.sent || 0) + 1;
+            stats.sentSize = (stats.sentSize || 0) + strMsg.length;
+        }
         user.socket.send(strMsg, () => {
             user.inQueue -= strMsg.length;
             if (user.inQueue > QUEUE_CHR) { return; }
@@ -331,6 +336,12 @@ const handleMessage = function (ctx, user, msg) {
     let seq = json.shift();
     let cmd = json[0];
 
+    const stats = ctx.stats;
+    if (stats) {
+        stats.received = (stats.received || 0) + 1;
+        stats.receivedSize = (stats.receivedSize || 0) + msg.length;
+    }
+
     user.timeOfLastMessage = now();
     user.pingOutstanding = false;
 
@@ -440,6 +451,12 @@ module.exports.create = function (socketServer) {
         registered: registered,
         Server: Server,
         active: true,
+        stats: {
+            sent: 0,
+            sentSize: 0,
+            received: 0,
+            receivedSize: 0
+        }
     };
 
     Server.channelBroadcast = function (channel, msg, from) {
@@ -483,9 +500,17 @@ module.exports.create = function (socketServer) {
                 ips.push(ip);
             }
         });
+
+        const { sent, sentSize, received, receivedSize } = ctx.stats;
+        ctx.stats.sent = 0;
+        ctx.stats.sentSize = 0;
+        ctx.stats.received = 0;
+        ctx.stats.receivedSize = 0;
+
         return {
             total: total,
-            unique: ips.length
+            unique: ips.length,
+            sent, sentSize, received, receivedSize
         };
     };
 
