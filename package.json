@@ -1,7 +1,7 @@
 {
   "name": "chainpad-server",
   "description": "api backend for realtime collaborative visual editor with zero knowledge server",
-  "version": "5.2.2",
+  "version": "5.2.3",
   "dependencies": {},
   "main": "NetfluxWebsocketSrv.js",
   "devDependencies": {
