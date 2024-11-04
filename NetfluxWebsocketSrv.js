@@ -502,10 +502,6 @@ module.exports.create = function (socketServer) {
         });
 
         const { sent, sentSize, received, receivedSize } = ctx.stats;
-        ctx.stats.sent = 0;
-        ctx.stats.sentSize = 0;
-        ctx.stats.received = 0;
-        ctx.stats.receivedSize = 0;
 
         return {
             total: total,
