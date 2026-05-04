@@ -3,6 +3,7 @@ const Crypto = require('crypto');
 
 const LAG_MAX_BEFORE_DISCONNECT = 60000;
 const LAG_MAX_BEFORE_PING = 15000;
+const RECV_RATE_LIMIT = 100; // messages allowed per second
 
 const now = function () { return (new Date()).getTime(); };
 
@@ -562,6 +563,24 @@ module.exports.create = function (socketServer) {
         return createUniqueName();
     };
 
+    const checkWssLimit = (user) => {
+        const { wssLimit } = user;
+        if (wssLimit.dropped) { return false; }
+        const nowSecond = +new Date().setMilliseconds(0);
+        if (wssLimit?.lastWindow < nowSecond) {
+            wssLimit.lastWindow = nowSecond;
+            wssLimit.count = 1;
+            return true;
+        }
+        if (wssLimit.count >= RECV_RATE_LIMIT) {
+            ctx.emit.error('WS_LIMIT_EXCEEDED', user.ip); // Log the first abuse
+            wssLimit.dropped = true;
+            return false;
+        }
+        wssLimit.count++;
+        return true;
+    };
+
     socketServer.on('connection', function(socket, req) {
         // refuse new connections if the server is shutting down
         if (!ctx.active) { return; }
@@ -576,7 +595,12 @@ module.exports.create = function (socketServer) {
             pingOutstanding: false,
             inQueue: 0,
             ip: ip.replace(/^::ffff:/, ''),
-            sendMsgCallbacks: []
+            sendMsgCallbacks: [],
+            wssLimit: {
+                dropped: false,
+                lastWindow: +new Date().setMilliseconds(0),
+                count: 0
+            }
         };
         ctx.users[user.id] = user;
         sendMsg(ctx, user, [0, '', 'IDENT', user.id]);
@@ -584,6 +608,7 @@ module.exports.create = function (socketServer) {
         ctx.emit.sessionOpen(user.id, user.ip);
 
         socket.on('message', function(message) {
+            if (!checkWssLimit(user)) { return; } // silently ignore an abusing user messages
             try {
                 handleMessage(ctx, user, message);
             } catch (e) {
