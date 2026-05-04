@@ -573,7 +573,8 @@ module.exports.create = function (socketServer) {
             return true;
         }
         if (wssLimit.count >= RECV_RATE_LIMIT) {
-            ctx.emit.error('WS_LIMIT_EXCEEDED', user.ip); // Log the first abuse
+            ctx.emit.error(new Error('WS_LIMIT_EXCEEDED'), 'WS_LIMIT_EXCEEDED',
+                { id: user.id, ip: user.ip }); // Log the first abuse
             wssLimit.dropped = true;
             return false;
         }
